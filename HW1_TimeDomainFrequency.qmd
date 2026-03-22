@@ -599,9 +599,53 @@ the **class-average periodogram** as a bold line.
 # YOUR CODE HERE
 ```
 
-```python
+```{python}
 # Hint: use scipy.signal.periodogram or numpy.fft.rfft.
-# YOUR CODE HERE
+classes = np.unique(y_train)
+L = X_train.shape[1]
+n_per_class = 5
+
+selected_periodogram_indices = {}
+
+fig, axes = plt.subplots(len(classes), 1, figsize=(10, 5 * len(classes)), squeeze=False)
+
+for row, cls in enumerate(classes):
+    cls_idx = np.where(y_train == cls)[0]
+    chosen_idx = np.random.choice(cls_idx, size=n_per_class, replace=False)
+    selected_periodogram_indices[cls] = chosen_idx
+
+    freqs = np.arange(0, L // 2 + 1) / L
+    class_periodograms = []
+
+    ax = axes[row, 0]
+
+    for idx in chosen_idx:
+        series = X_train[idx]
+
+        fft_vals = np.fft.rfft(series)
+        pxx = (1 / L) * np.abs(fft_vals) ** 2
+
+        class_periodograms.append(pxx)
+
+        ax.plot(freqs, pxx, alpha=0.35, linewidth=1)
+
+    class_periodograms = np.array(class_periodograms)
+    avg_periodogram = class_periodograms.mean(axis=0)
+
+    ax.plot(freqs, avg_periodogram, linewidth=2.5, label="Class-average periodogram")
+
+    ax.set_title(f"Periodograms for 5 Random Training Series – Class {cls}")
+    ax.set_xlabel("Frequency")
+    ax.set_ylabel("Power")
+    ax.legend()
+
+fig.suptitle("Class-wise Periodogram Comparison", fontsize=14)
+plt.tight_layout(rect=[0, 0, 1, 0.97])
+plt.show()
+
+for cls in classes:
+    print(f"Class {cls}: selected indices = {selected_periodogram_indices[cls]}")
+
 ```
 
 ## Dominant frequency
@@ -619,6 +663,50 @@ Report:
 Does the dominant frequency differ between classes? Could $\omega^*$ alone
 discriminate between them?
 
+```{python}
+dominant_rows = []
+
+for cls in classes:
+    chosen_idx = selected_periodogram_indices[cls]
+
+    freqs = np.arange(0, L // 2 + 1) / L
+    class_periodograms = []
+
+    for idx in chosen_idx:
+        series = X_train[idx]
+        fft_vals = np.fft.rfft(series)
+        pxx = (1 / L) * np.abs(fft_vals) ** 2
+        class_periodograms.append(pxx)
+
+    class_periodograms = np.array(class_periodograms)
+    avg_periodogram = class_periodograms.mean(axis=0)
+
+    # Exclude omega = 0
+    freqs_nozero = freqs[1:]
+    avg_nozero = avg_periodogram[1:]
+
+    dom_idx = np.argmax(avg_nozero)
+    omega_star = freqs_nozero[dom_idx]
+    peak_power = avg_nozero[dom_idx]
+    dominant_period = 1 / omega_star
+
+    dominant_rows.append({
+        "Class": cls,
+        "Dominant frequency ω*": omega_star,
+        "Dominant period 1/ω*": dominant_period,
+        "Peak power": peak_power
+    })
+
+dominant_table = pd.DataFrame(dominant_rows)
+
+for col in ["Dominant frequency ω*", "Dominant period 1/ω*", "Peak power"]:
+    dominant_table[col] = dominant_table[col].round(6)
+
+dominant_table
+```
+
+The dominant frequency is identical for both classes, with ω* ≈ 0.003497, corresponding to a period of approximately 286, which matches the full series length. This suggests that the dominant component reflects a global trend or low-frequency variation rather than a distinct periodic behavior. The peak power values are also very similar, indicating no meaningful difference in spectral dominance between classes. As a result, the dominant frequency ω* alone is not sufficient to discriminate between the classes.
+
 ## Smoothed vs. raw periodogram
 
 For one representative series per class, compare:
@@ -631,12 +719,67 @@ corresponding period.
 
 *In 2–3 sentences: what is gained (and what is lost) by smoothing?*
 
+```{python}
+bandwidth = 9
+half_window = bandwidth // 2
+
+classes = np.unique(y_train)
+L = X_train.shape[1]
+freqs = np.arange(0, L // 2 + 1) / L
+
+fig, axes = plt.subplots(len(classes), 1, figsize=(10, 5 * len(classes)), squeeze=False)
+
+for row, cls in enumerate(classes):
+    idx = rep_indices[cls]
+    series = X_train[idx]
+
+    fft_vals = np.fft.rfft(series)
+    raw_pxx = (1 / L) * np.abs(fft_vals) ** 2
+
+    kernel = np.ones(bandwidth) / bandwidth
+    smooth_pxx = np.convolve(raw_pxx, kernel, mode="same")
+
+    dom_idx_raw = np.argmax(raw_pxx[1:]) + 1
+    dom_freq_raw = freqs[dom_idx_raw]
+    dom_period_raw = 1 / dom_freq_raw
+
+    dom_idx_smooth = np.argmax(smooth_pxx[1:]) + 1
+    dom_freq_smooth = freqs[dom_idx_smooth]
+    dom_period_smooth = 1 / dom_freq_smooth
+
+    ax = axes[row, 0]
+    ax.plot(freqs, raw_pxx, label="Raw periodogram", alpha=0.7, linewidth=1.5)
+    ax.plot(freqs, smooth_pxx, label="Smoothed periodogram (L=9)", linewidth=2.5)
+
+    ax.scatter(dom_freq_smooth, smooth_pxx[dom_idx_smooth], zorder=5)
+    ax.annotate(
+        f"Peak: ω={dom_freq_smooth:.4f}\nPeriod={dom_period_smooth:.1f}",
+        xy=(dom_freq_smooth, smooth_pxx[dom_idx_smooth]),
+        xytext=(dom_freq_smooth + 0.03, smooth_pxx[dom_idx_smooth] * 0.85),
+        arrowprops=dict(arrowstyle="->", lw=1),
+        fontsize=9
+    )
+
+    ax.set_title(f"Raw vs Smoothed Periodogram – Class {cls} (index {idx})")
+    ax.set_xlabel("Frequency")
+    ax.set_ylabel("Power")
+    ax.legend()
+
+fig.suptitle("Raw and Smoothed Periodograms for Representative Series", fontsize=14)
+plt.tight_layout(rect=[0, 0, 1, 0.97])
+plt.show()
+```
+
+Smoothing significantly reduces the high variance of the raw periodogram, making the dominant frequency much easier to identify. While the raw periodogram contains many sharp and noisy spikes, the smoothed version reveals a clear and stable peak around ω ≈ 0.0175 (period ≈ 57). This improves interpretability but comes at the cost of reduced spectral resolution, as finer frequency details and narrow peaks are smoothed out.
+
 ## Time domain vs. frequency domain
 
 Does the dominant period you found in §3.2 correspond to any periodic structure
 you observed in the ACF (§1.3)?
 If yes: at which ACF lag does the peak appear, and does it match $1/\omega^*$?
 If no: speculate why the two analyses might disagree for your dataset.
+
+No, the dominant period from §3.2 is not matched by any clear periodic peak in the ACF from §1.3. Instead of repeated local maxima at regular lags, the ACF showed a gradual decay and then moderate negative autocorrelation, which is more consistent with smooth non-stationary structure than with a stable cycle. This suggests that the dominant frequency in the class-average periodogram mainly captures a very low-frequency global trend, with period approximately equal to the series length, rather than a meaningful repeating pattern. Therefore, the two analyses disagree because they are emphasizing different aspects of the data: the periodogram highlights low-frequency spectral power, while the ACF reflects overall persistence and trend-like behavior.
 
 ---
 
