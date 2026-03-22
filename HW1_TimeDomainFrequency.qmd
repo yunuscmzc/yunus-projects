@@ -1,0 +1,600 @@
+---
+title: "IE 48B — Homework 1"
+subtitle: "Exploring Time Series through Time and Frequency Domains"
+author: "Yunus Emre Camızcı | Student ID: 2021402078"
+date: "Due: March 23, 2026, 23:59"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    self-contained: true
+    fig-width: 9
+    fig-height: 4
+    fig-dpi: 150
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+---
+
+::: {.callout-important}
+## Dataset Assignment
+
+Each student is assigned a **unique** dataset from the
+[UCR Time Series Classification Archive](https://www.timeseriesclassification.com/).
+Find your student ID in the table below to identify your dataset.
+All analysis must be performed on **your assigned dataset** — submissions using a
+different dataset receive zero credit.
+
+| Student ID | Dataset |
+|:----------:|---------|
+| 2019\*\*\*078 | Rock |
+| 2020\*\*\*162 | Beef |
+| 2020\*\*\*180 | ShapeletSim |
+| 2020\*\*\*240 | Ham |
+| 2021\*\*\*015 | Wafer |
+| 2021\*\*\*051 | Herring |
+| 2021\*\*\*054 | FaceFour |
+| 2021\*\*\*069 | GunPoint |
+| 2021\*\*\*078 | Coffee |
+| 2021\*\*\*153 | ECGFiveDays |
+| 2021\*\*\*162 | Trace |
+| 2021\*\*\*174 | OSULeaf |
+| 2021\*\*\*216 | SyntheticControl |
+| 2021\*\*\*264 | MedicalImages |
+| 2021\*\*\*273 | Plane |
+| 2021\*\*\*309 | Strawberry |
+| 2022\*\*\*249 | ECG200 |
+| 2022\*\*\*270 | CBF |
+| 2023\*\*\*219 | ItalyPowerDemand |
+| 2023\*\*\*255 | TwoLeadECG |
+| 2024\*\*\*003 | Wine |
+| 2024\*\*\*066 | SonyAIBORobotSurface1 |
+| 2024\*\*\*279 | Lightning2 |
+| 2024\*\*\*294 | BeetleFly |
+| 2025\*\*\*069 | FordA |
+| 2025\*\*\*081 | Fish |
+
+Dataset details (classes, train/test sizes, domain) are in the homework PDF.
+:::
+
+
+> **Reproducibility requirement:** Set your random seed using your student ID
+> in every code block that uses randomisation (e.g. `set.seed(XXXXXXXX)` in R
+> or `np.random.seed(XXXXXXXX % 2**31)` in Python). Results that cannot be
+> reproduced with this seed receive zero credit for the affected question.
+
+> **Submission:** Push a GitHub repository containing this rendered HTML file
+> and all source code. Repository structure must follow the course template
+> (see syllabus). Add the instructor and TA as collaborators.
+
+::: {.callout-tip}
+## Work incrementally — commit after each part
+
+After completing each part, render the document and push your progress:
+
+```bash
+quarto render HW1_TimeDomainFrequency.qmd
+git add HW1_TimeDomainFrequency.qmd HW1_TimeDomainFrequency.html
+git commit -m "Complete Part 2: missing data simulation"
+git push
+```
+
+**Your commit history is assessed.** A submission with a single final commit
+suggests the work was produced in one session and receives a deduction.
+Aim for at least one commit per part.
+:::
+
+---
+
+# Dataset Overview
+
+**Assigned dataset:** *Coffee*  
+**Number of classes:** *2*  
+**Training set size:** *28*  
+**Test set size:** *28*  
+**Series length:** *286*  
+**Domain / description:** *Time series representing spectroscopic measurements of coffee beans used for classification.*
+
+Load your dataset and confirm the dimensions match the archive description.
+
+```r
+# R — example using tsclassification helper or direct download
+# Adjust path to wherever you stored the .ts or .arff file
+
+# library(tsrepr)        # or read manually
+# Recommended: download the .ts format from the archive,
+# then parse with readr / tsclassification package
+
+# YOUR CODE HERE
+
+# Expected output:
+# dim(train_data)  →  [n_train x (length + 1)]   last column = class label
+# dim(test_data)   →  [n_test  x (length + 1)]
+```
+
+```{python}
+# Python — example using aeon or sktime
+# pip install aeon  (or: pip install sktime)
+
+# from aeon.datasets import load_classification
+# X_train, y_train = load_classification("YourDataset", split="train")
+# X_test,  y_test  = load_classification("YourDataset", split="test")
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from aeon.datasets import load_from_ts_file
+
+STUDENT_ID = 2021402078
+
+train_path = "data/Coffee_TRAIN.ts"
+test_path = "data/Coffee_TEST.ts"
+
+X_train, y_train = load_from_ts_file(train_path)
+X_test, y_test = load_from_ts_file(test_path)
+
+if X_train.ndim == 3:
+    X_train = X_train[:, 0, :]
+if X_test.ndim == 3:
+    X_test = X_test[:, 0, :]
+
+print("X_train shape:", X_train.shape)
+print("y_train shape:", y_train.shape)
+print("X_test shape:", X_test.shape)
+print("y_test shape:", y_test.shape)
+
+# Expected output:
+# X_train.shape  →  (n_train, 1, length)   for univariate
+# y_train.shape  →  (n_train,)
+```
+
+---
+
+# Part 1 — Time Domain Exploration (25 pts)
+
+## Representative plots
+
+Plot **3 randomly selected time series per class**, arranged in a grid (classes in rows,
+samples in columns). Label axes, include class labels in panel titles, and use consistent
+y-axis limits across panels so amplitudes are comparable.
+
+*Deliverable: one figure, one paragraph interpretation (≤ 100 words).*
+
+```{python}
+# set.seed(YOUR_STUDENT_ID)
+np.random.seed(STUDENT_ID % 2**31)
+
+classes = np.unique(y_train)
+selected_indices = {}
+
+for cls in classes:
+    cls_idx = np.where(y_train == cls)[0]
+    selected_indices[cls] = np.random.choice(cls_idx, size=3, replace=False)
+
+all_values = []
+for cls in classes:
+    for idx in selected_indices[cls]:
+        all_values.append(X_train[idx])
+
+all_values = np.concatenate(all_values)
+y_min, y_max = all_values.min(), all_values.max()
+
+# Plot
+n_rows = len(classes)
+n_cols = 3
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 4 * n_rows), squeeze=False)
+
+for row, cls in enumerate(classes):
+    for col, idx in enumerate(selected_indices[cls]):
+        ax = axes[row, col]
+        ax.plot(X_train[idx])
+        ax.set_title(f"Class {cls} – Example {col+1}")
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Value")
+        ax.set_ylim(y_min, y_max)
+
+fig.suptitle("Three Random Training Series per Class", fontsize=14)
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.show()
+```
+The randomly selected training series show that both classes share a broadly similar overall shape, including gradual increases, multiple oscillations, and a sharp decline near the end of the series. Within-class variation appears relatively small, as samples from the same class exhibit similar patterns. However, the separation between classes is not clearly visible from raw time-domain plots alone, suggesting that additional analyses such as autocorrelation and frequency-domain features may be necessary for effective discrimination.
+
+## Descriptive statistics
+
+Compute the following for the **training set**, broken down by class:
+
+| Statistic | Class 1 | Class 2 | … |
+|-----------|---------|---------|---|
+| Number of series | | | |
+| Mean (across all time points and series) | | | |
+| Standard deviation | | | |
+| Min value | | | |
+| Max value | | | |
+| Series length | | | |
+
+Report the table in your rendered HTML. Are the classes distinguishable by their
+marginal statistics alone?
+
+```{python}
+stats_rows = []
+
+for cls in np.unique(y_train):
+    class_series = X_train[y_train == cls]
+    class_values = class_series.flatten()
+
+    stats_rows.append({
+        "Class": cls,
+        "Number of series": class_series.shape[0],
+        "Mean": np.mean(class_values),
+        "Standard deviation": np.std(class_values, ddof=1),
+        "Min value": np.min(class_values),
+        "Max value": np.max(class_values),
+        "Series length": class_series.shape[1]
+    })
+
+stats_table = pd.DataFrame(stats_rows)
+
+for col in ["Mean", "Standard deviation", "Min value", "Max value"]:
+    stats_table[col] = stats_table[col].round(6)
+
+stats_table
+```
+The class-wise descriptive statistics are extremely similar. Both classes contain the same number of training series and have identical series length. Their means are essentially zero, their standard deviations are the same up to the reported precision, and their minimum and maximum values are also very close. This suggests that the two classes are not distinguishable by marginal statistics alone. Any useful separation is therefore more likely to come from temporal structure, such as autocorrelation patterns or frequency-domain characteristics, rather than simple distributional summaries.
+
+## ACF analysis
+
+Pick **one representative series per class** (e.g. the series closest to the class mean
+in Euclidean distance). Compute and plot the ACF up to lag $h = \lfloor L/4 \rfloor$,
+where $L$ is the series length. Include the 95% confidence bands
+$\pm 1.96/\sqrt{L}$.
+
+1. Does either class show significant periodic structure? If so, at what lag?
+2. Do the two ACF profiles differ? Describe the difference concisely.
+
+```{python}
+from statsmodels.tsa.stattools import acf
+
+classes = np.unique(y_train)
+L = X_train.shape[1]
+max_lag = L // 4
+conf_band = 1.96 / np.sqrt(L)
+
+representatives = {}
+rep_indices = {}
+
+for cls in classes:
+    class_series = X_train[y_train == cls]
+    class_mean_series = np.mean(class_series, axis=0)
+
+    distances = np.linalg.norm(class_series - class_mean_series, axis=1)
+    best_local_idx = np.argmin(distances)
+    global_idx = np.where(y_train == cls)[0][best_local_idx]
+
+    representatives[cls] = class_series[best_local_idx]
+    rep_indices[cls] = global_idx
+
+for cls in classes:
+    print(f"Class {cls}: representative series index = {rep_indices[cls]}")
+
+fig, axes = plt.subplots(len(classes), 1, figsize=(10, 4 * len(classes)), squeeze=False)
+
+for row, cls in enumerate(classes):
+    x_rep = representatives[cls]
+    acf_vals = acf(x_rep, nlags=max_lag, fft=False)
+    lags = np.arange(len(acf_vals))
+
+    ax = axes[row, 0]
+    ax.stem(lags, acf_vals, basefmt=" ")
+    ax.axhline(0, linestyle="--", linewidth=1)
+    ax.axhline(conf_band, linestyle="--", linewidth=1)
+    ax.axhline(-conf_band, linestyle="--", linewidth=1)
+
+    ax.set_title(f"ACF of Representative Series – Class {cls} (index {rep_indices[cls]})")
+    ax.set_xlabel("Lag")
+    ax.set_ylabel("ACF")
+    ax.set_xlim(0, max_lag)
+
+fig.suptitle("Representative-Series ACF by Class", fontsize=14)
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.show()
+```
+
+Neither class shows a clear periodic pattern in the ACF. Instead of repeated oscillatory peaks at regular lags, both representative series display a smooth decay from strong positive autocorrelation at small lags toward negative values at medium lags. This suggests persistence in local shape rather than a stable repeating cycle. The two ACF profiles are very similar overall, indicating that the classes do not differ sharply in their basic autocorrelation structure, although Class 1 appears to decay slightly more slowly over the first several lags.
+
+## Stationarity check
+
+Apply the **Augmented Dickey–Fuller (ADF) test** to 5 randomly selected training
+series from each class (10 series total). Report the p-values.
+
+```
+Series   Class   ADF p-value   Decision (stationary?)
+-------  ------  -----------   ----------------------
+  1        1
+  2        1
+  ...
+```
+
+*Brief interpretation: are the series (approximately) stationary? Does it matter for
+the analyses that follow? (2–3 sentences)*
+
+```{python}
+from statsmodels.tsa.stattools import adfuller
+
+classes = np.unique(y_train)
+n_per_class = 5
+
+adf_rows = []
+
+for cls in classes:
+    cls_idx = np.where(y_train == cls)[0]
+    chosen_idx = np.random.choice(cls_idx, size=n_per_class, replace=False)
+
+    for idx in chosen_idx:
+        series = X_train[idx]
+        adf_result = adfuller(series)
+        p_value = adf_result[1]
+
+        adf_rows.append({
+            "Series": idx,
+            "Class": cls,
+            "ADF p-value": p_value,
+            "Decision (stationary?)": "Yes" if p_value < 0.05 else "No"
+        })
+
+adf_table = pd.DataFrame(adf_rows).sort_values(["Class", "Series"]).reset_index(drop=True)
+adf_table["ADF p-value"] = adf_table["ADF p-value"].round(6)
+
+adf_table
+```
+
+The ADF test results show that all selected series have p-values greater than 0.05, meaning that the null hypothesis of a unit root cannot be rejected. This suggests that the series are not stationary. However, this is consistent with the observed smooth trends and slow decay in the ACF. While strict stationarity is not satisfied, this does not critically affect the analyses that follow, since the focus is on pattern comparison and feature extraction rather than formal time series modeling.
+
+---
+
+# Part 2 — Missing Data Simulation (25 pts)
+
+Real-world time series often arrive with gaps: sensor dropouts, transmission errors,
+or irregular sampling. This section asks you to simulate missing data and evaluate
+imputation strategies.
+
+## Introduce missingness
+
+Randomly mask **10% of the time-index positions** in every training series.
+Use your student ID as the random seed so your results are reproducible.
+
+- Generate a single missing-index mask *per series* (each series gets its own
+  random mask).
+- Replace masked values with `NaN`.
+- Do **not** modify the test set — it remains complete.
+
+```r
+# set.seed(YOUR_STUDENT_ID)
+# n_missing <- floor(0.10 * L)
+# For each series: sample n_missing positions without replacement → set to NA
+# YOUR CODE HERE
+```
+
+## Imputation strategies
+
+Implement the following three strategies and apply each to **all training series**:
+
+| Strategy | Description |
+|----------|-------------|
+| **Mean fill** | Replace each `NaN` with the *series mean* (computed from observed values only) |
+| **Linear interpolation** | Linearly interpolate between the two nearest observed neighbours |
+| **Moving-average fill** | Replace each `NaN` with the average of the nearest $w$ observed values on each side; use $w = 5$ |
+
+Report the wall-clock time (or relative speed) of each strategy on your dataset.
+
+## Effect on ACF
+
+Take the **same representative series** you used in §1.3 (one per class).
+For each imputation strategy, compute the ACF on the imputed series and overlay
+it on the ACF of the *original* (un-masked) series.
+
+*Deliverable: one figure per class (4 ACF curves per figure: original + 3 strategies).
+One paragraph per class explaining which strategy best preserves the ACF structure
+and why.*
+
+::: {.callout-tip}
+## What to look for
+Mean fill inserts sharp "spikes" of constant value — this creates **artificial
+autocorrelation** at all lags. Linear interpolation introduces local smoothness
+that can **inflate** short-lag autocorrelation. Moving-average fill is usually
+closest to the true ACF when the true series is smooth. Verify whether this
+holds for your dataset.
+:::
+
+## Imputation choice
+
+Based on the ACF comparison, which strategy would you use for downstream analysis?
+Justify your choice in 3–4 sentences. Are there situations where a different choice
+might be preferable?
+
+---
+
+# Part 3 — Frequency Domain Analysis (25 pts)
+
+## Periodogram
+
+Compute the **periodogram** of 5 randomly selected training series per class using
+the DFT:
+
+$$I(\omega_j) = \frac{1}{n}\left|\sum_{t=1}^{n} x_t \, e^{-2\pi i \omega_j t}\right|^2,
+\quad \omega_j = j/n, \quad j = 0, 1, \ldots, \lfloor n/2 \rfloor$$
+
+Plot all 5 periodograms per class on the same axes (use transparency), and overlay
+the **class-average periodogram** as a bold line.
+
+```r
+# Hint: use stats::spectrum() with method="pgram" and detrend=FALSE,
+#        or compute manually via fft().
+# YOUR CODE HERE
+```
+
+```python
+# Hint: use scipy.signal.periodogram or numpy.fft.rfft.
+# YOUR CODE HERE
+```
+
+## Dominant frequency
+
+For each class, identify the **dominant frequency** $\omega^*$ — the frequency at
+which the average periodogram attains its maximum (excluding $\omega = 0$).
+
+Report:
+
+| Class | Dominant frequency $\omega^*$ | Dominant period $1/\omega^*$ | Peak power |
+|-------|-------------------------------|------------------------------|------------|
+| 1 | | | |
+| 2 | | | |
+
+Does the dominant frequency differ between classes? Could $\omega^*$ alone
+discriminate between them?
+
+## Smoothed vs. raw periodogram
+
+For one representative series per class, compare:
+- the **raw periodogram** (high variance, inconsistent)
+- a **smoothed periodogram** with bandwidth $L = 9$ (average 9 adjacent
+  frequency bins using a Daniell/boxcar kernel)
+
+Plot both on the same axes. Annotate the dominant peak with its frequency and
+corresponding period.
+
+*In 2–3 sentences: what is gained (and what is lost) by smoothing?*
+
+## Time domain vs. frequency domain
+
+Does the dominant period you found in §3.2 correspond to any periodic structure
+you observed in the ACF (§1.3)?
+If yes: at which ACF lag does the peak appear, and does it match $1/\omega^*$?
+If no: speculate why the two analyses might disagree for your dataset.
+
+---
+
+# Part 4 — Robustness Analysis (15 pts)
+
+A key practical question: *how much noise can a spectral analysis tolerate before the
+dominant frequency becomes undetectable?*
+
+## Noise injection
+
+Take **10 randomly selected training series** (balanced across classes if possible).
+For each series $x_t$ of length $L$ with standard deviation $\sigma_x$, create two
+noisy versions:
+
+$$x_t^{(1)} = x_t + \varepsilon_t, \quad \varepsilon_t \sim \mathcal{N}(0,\,(0.2\sigma_x)^2)$$
+$$x_t^{(2)} = x_t + \varepsilon_t, \quad \varepsilon_t \sim \mathcal{N}(0,\,(0.5\sigma_x)^2)$$
+
+Compute the periodogram of the original and both noisy versions.
+
+## Peak degradation
+
+For each of the 10 series, record the dominant frequency $\omega^*$ and the
+**signal-to-noise ratio at the peak** (ratio of peak power to the median power
+across all frequencies) for the original and both noise levels:
+
+| Series | $\omega^*$ (orig.) | SNR (orig.) | $\omega^*$ (low noise) | SNR (low) | $\omega^*$ (high noise) | SNR (high) |
+|--------|--------------------|-------------|------------------------|-----------|------------------------|------------|
+| 1 | | | | | | |
+| … | | | | | | |
+
+*Does the dominant frequency $\omega^*$ shift under noise, or does the peak simply
+become less prominent?*
+
+## Detectability threshold
+
+Considering the 10 series together: at what noise level (if any) does the dominant
+spectral peak become **indistinguishable from noise** (i.e. SNR ≤ 3 dB)?
+Does this threshold depend on the class of the series?
+
+*Deliverable: one paragraph + supporting figure (e.g. box plot of SNR across 10
+series, by noise level).*
+
+## Implication for analysis
+
+In 3–4 sentences: what does this robustness experiment tell you about the
+practical reliability of spectral features for classifying your dataset?
+Under what conditions would frequency-domain analysis fail as a discriminator?
+
+---
+
+# Part 5 — Held-out Prediction (10 pts)
+
+This section asks you to build the simplest possible classifier from the spectral
+features you computed and evaluate it on the **test set** (which was not used
+in any prior analysis).
+
+## Feature extraction
+
+For each **training** series, compute the following features from the *original*
+(un-masked) series:
+
+1. Dominant frequency $\omega^*$ (location of the periodogram maximum)
+2. Peak power (value of periodogram at $\omega^*$)
+3. Fraction of total power in the top-3 frequencies (spectral concentration)
+4. Mean ACF at lags 1–5 (average of $|\hat\gamma(1)|, \ldots, |\hat\gamma(5)|$)
+
+Assemble these into a feature matrix $\mathbf{F}_\text{train} \in \mathbb{R}^{n_\text{train} \times 4}$.
+Repeat for the test set to get $\mathbf{F}_\text{test}$.
+
+## Nearest-centroid classifier
+
+For each class, compute the **centroid** (mean feature vector) from training
+examples. Assign each test series to the class whose centroid is closest in
+Euclidean distance.
+
+```
+accuracy = (number of correctly classified test series) / (total test series)
+```
+
+Report accuracy and compare to the **majority-class baseline**
+(always predict the most frequent training class).
+
+## Reflection
+
+Did spectral features alone provide useful discrimination?
+Compare your result to the UCR archive's reported accuracy for your dataset
+(listed on the archive webpage). What does the gap suggest about what information
+your 4 features are missing?
+
+---
+
+# Part 6 — Decision Log (required, 300–400 words) {#sec-log}
+
+This section is graded on **specificity and honesty**, not on whether your choices
+were optimal. Generic statements ("I chose linear interpolation because it is commonly
+used") receive no credit. Statements referencing your specific dataset and results
+("For dataset X, mean fill created a spurious ACF peak at lag 12 that was not present
+in the original; linear interpolation preserved the ACF structure up to lag 20") receive
+full credit.
+
+Address the following four prompts:
+
+1. **Two key decisions** you made during the analysis (e.g. choice of imputation
+   strategy, bandwidth for smoothing, how you handled edge cases) — explain *why*
+   you made each decision based on evidence from your own data.
+
+2. **One surprising finding** that you did not expect before starting the analysis.
+   What does it reveal about your dataset?
+
+3. **One limitation** of the analysis pipeline in this homework. What would you
+   do differently with more time?
+
+4. **One open question** your analysis raised that this homework did not answer.
+
+---
+
+*IE 48B — Special Topics in Time Series Analytics, Spring 2026*
+*Mustafa Gökçe Baydoğan*
