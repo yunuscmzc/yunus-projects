@@ -964,6 +964,45 @@ For each **training** series, compute the following features from the *original*
 Assemble these into a feature matrix $\mathbf{F}_\text{train} \in \mathbb{R}^{n_\text{train} \times 4}$.
 Repeat for the test set to get $\mathbf{F}_\text{test}$.
 
+```{python}
+from statsmodels.tsa.stattools import acf
+
+def extract_features(X):
+    L = X.shape[1]
+    freqs = np.arange(0, L // 2 + 1) / L
+    feature_rows = []
+
+    for i in range(X.shape[0]):
+        series = X[i]
+
+        pxx = (1 / L) * np.abs(np.fft.rfft(series)) ** 2
+        pxx_nozero = pxx[1:]
+        freqs_nozero = freqs[1:]
+
+        dom_idx = np.argmax(pxx_nozero)
+        omega_star = freqs_nozero[dom_idx]
+        peak_power = pxx_nozero[dom_idx]
+
+        top3_power = np.sort(pxx_nozero)[-3:].sum()
+        total_power = pxx_nozero.sum()
+        spectral_concentration = top3_power / total_power
+
+        acf_vals = acf(series, nlags=5, fft=False)
+        mean_short_lag_acf = np.mean(np.abs(acf_vals[1:6]))
+
+        feature_rows.append([
+            omega_star,
+            peak_power,
+            spectral_concentration,
+            mean_short_lag_acf
+        ])
+
+    return np.array(feature_rows)
+
+F_train = extract_features(X_train)
+F_test = extract_features(X_test)
+```
+
 ## Nearest-centroid classifier
 
 For each class, compute the **centroid** (mean feature vector) from training
@@ -977,12 +1016,53 @@ accuracy = (number of correctly classified test series) / (total test series)
 Report accuracy and compare to the **majority-class baseline**
 (always predict the most frequent training class).
 
+```{python}
+classes = np.unique(y_train)
+centroids = {}
+
+for cls in classes:
+    centroids[cls] = F_train[y_train == cls].mean(axis=0)
+
+y_pred = []
+
+for i in range(F_test.shape[0]):
+    x = F_test[i]
+
+    distances = {
+        cls: np.linalg.norm(x - centroids[cls])
+        for cls in classes
+    }
+
+    pred_class = min(distances, key=distances.get)
+    y_pred.append(pred_class)
+
+y_pred = np.array(y_pred)
+
+accuracy = np.mean(y_pred == y_test)
+
+train_class_counts = pd.Series(y_train).value_counts()
+majority_class = train_class_counts.idxmax()
+baseline_accuracy = np.mean(y_test == majority_class)
+
+results_table = pd.DataFrame({
+    "Metric": ["Nearest-centroid accuracy", "Majority-class baseline"],
+    "Value": [accuracy, baseline_accuracy]
+})
+
+results_table["Value"] = results_table["Value"].round(6)
+results_table
+```
+
+The nearest centroid classifier achieves an accuracy of approximately 0.57, which is slightly higher than the majority class baseline of about 0.54. This indicates that the extracted features provide some discriminatory information, but the improvement is modest. This result is consistent with earlier analyses, which showed that both classes have very similar time domain and frequency domain characteristics. Therefore, while spectral and ACF-based features are robust, they are not sufficiently distinctive to enable strong classification performance for this dataset.
+
 ## Reflection
 
 Did spectral features alone provide useful discrimination?
 Compare your result to the UCR archive's reported accuracy for your dataset
 (listed on the archive webpage). What does the gap suggest about what information
 your 4 features are missing?
+
+Spectral features alone did not provide strong discrimination for this dataset, as reflected by the relatively low classification accuracy (≈0.57) compared to the UCR archive’s reported accuracy, which is close to perfect. This large performance gap suggests that the four extracted features capture only limited aspects of the time series, mainly global spectral and autocorrelation properties. In contrast, the UCR benchmark methods exploit more detailed temporal structure, such as local shape patterns and alignment information. Therefore, important discriminative information (particularly time-domain shape characteristics) is missing from the chosen feature representation.
 
 ---
 
