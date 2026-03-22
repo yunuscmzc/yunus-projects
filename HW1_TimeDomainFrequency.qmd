@@ -384,6 +384,20 @@ Use your student ID as the random seed so your results are reproducible.
 # YOUR CODE HERE
 ```
 
+```{python}
+X_train_missing = X_train.copy()
+
+L = X_train.shape[1]
+n_missing = int(np.floor(0.10 * L))
+
+missing_masks = []
+
+for i in range(X_train.shape[0]):
+    missing_idx = np.random.choice(L, size=n_missing, replace=False)
+    missing_masks.append(missing_idx)
+    X_train_missing[i, missing_idx] = np.nan
+```
+
 ## Imputation strategies
 
 Implement the following three strategies and apply each to **all training series**:
@@ -395,6 +409,101 @@ Implement the following three strategies and apply each to **all training series
 | **Moving-average fill** | Replace each `NaN` with the average of the nearest $w$ observed values on each side; use $w = 5$ |
 
 Report the wall-clock time (or relative speed) of each strategy on your dataset.
+
+```{python}
+import time
+
+# Mean fill
+def mean_fill_all(X_missing):
+    X_filled = X_missing.copy()
+
+    for i in range(X_filled.shape[0]):
+        series = X_filled[i]
+        mean_val = np.nanmean(series)
+        nan_mask = np.isnan(series)
+        series[nan_mask] = mean_val
+        X_filled[i] = series
+
+    return X_filled
+
+
+# Linear interpolation
+def linear_interp_all(X_missing):
+    X_filled = X_missing.copy()
+    x = np.arange(X_filled.shape[1])
+
+    for i in range(X_filled.shape[0]):
+        series = X_filled[i]
+        nan_mask = np.isnan(series)
+        obs_mask = ~nan_mask
+
+        series[nan_mask] = np.interp(x[nan_mask], x[obs_mask], series[obs_mask])
+        X_filled[i] = series
+
+    return X_filled
+
+
+# Moving-average fill 
+def moving_average_fill_series(series, w=5):
+    filled = series.copy()
+    nan_positions = np.where(np.isnan(filled))[0]
+
+    for pos in nan_positions:
+        left_vals = []
+        j = pos - 1
+        while j >= 0 and len(left_vals) < w:
+            if not np.isnan(filled[j]):
+                left_vals.append(filled[j])
+            j -= 1
+
+        right_vals = []
+        j = pos + 1
+        while j < len(filled) and len(right_vals) < w:
+            if not np.isnan(filled[j]):
+                right_vals.append(filled[j])
+            j += 1
+
+        neighbors = left_vals + right_vals
+
+        if len(neighbors) > 0:
+            filled[pos] = np.mean(neighbors)
+        else:
+            filled[pos] = np.nanmean(filled)
+
+    return filled
+
+
+def moving_average_fill_all(X_missing, w=5):
+    X_filled = X_missing.copy()
+
+    for i in range(X_filled.shape[0]):
+        X_filled[i] = moving_average_fill_series(X_filled[i], w=w)
+
+    return X_filled
+
+
+# Timing
+timing_rows = []
+
+start = time.perf_counter()
+X_train_mean = mean_fill_all(X_train_missing)
+elapsed_mean = time.perf_counter() - start
+timing_rows.append({"Strategy": "Mean fill", "Time (seconds)": elapsed_mean})
+
+start = time.perf_counter()
+X_train_linear = linear_interp_all(X_train_missing)
+elapsed_linear = time.perf_counter() - start
+timing_rows.append({"Strategy": "Linear interpolation", "Time (seconds)": elapsed_linear})
+
+start = time.perf_counter()
+X_train_ma = moving_average_fill_all(X_train_missing, w=5)
+elapsed_ma = time.perf_counter() - start
+timing_rows.append({"Strategy": "Moving-average fill (w=5)", "Time (seconds)": elapsed_ma})
+
+timing_table = pd.DataFrame(timing_rows)
+timing_table["Time (seconds)"] = timing_table["Time (seconds)"].round(6)
+timing_table
+```
 
 ## Effect on ACF
 
@@ -415,11 +524,59 @@ closest to the true ACF when the true series is smooth. Verify whether this
 holds for your dataset.
 :::
 
+```{python}
+from statsmodels.tsa.stattools import acf
+
+L = X_train.shape[1]
+max_lag = L // 4
+conf_band = 1.96 / np.sqrt(L)
+
+classes = np.unique(y_train)
+
+for cls in classes:
+    idx = rep_indices[cls]
+
+    original_series = X_train[idx]
+    mean_series = X_train_mean[idx]
+    linear_series = X_train_linear[idx]
+    ma_series = X_train_ma[idx]
+
+    acf_original = acf(original_series, nlags=max_lag, fft=False)
+    acf_mean = acf(mean_series, nlags=max_lag, fft=False)
+    acf_linear = acf(linear_series, nlags=max_lag, fft=False)
+    acf_ma = acf(ma_series, nlags=max_lag, fft=False)
+
+    lags = np.arange(max_lag + 1)
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(lags, acf_original, label="Original", linewidth=2)
+    plt.plot(lags, acf_mean, label="Mean fill", linewidth=2)
+    plt.plot(lags, acf_linear, label="Linear interpolation", linewidth=2)
+    plt.plot(lags, acf_ma, label="Moving-average fill (w=5)", linewidth=2)
+
+    plt.axhline(0, linestyle="--", linewidth=1)
+    plt.axhline(conf_band, linestyle="--", linewidth=1)
+    plt.axhline(-conf_band, linestyle="--", linewidth=1)
+
+    plt.title(f"ACF Comparison for Representative Series – Class {cls} (index {idx})")
+    plt.xlabel("Lag")
+    plt.ylabel("ACF")
+    plt.xlim(0, max_lag)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+```
+For Class 0, both linear interpolation and moving-average imputation closely match the original ACF, with almost indistinguishable curves across most lags. The moving-average method appears slightly smoother and marginally closer in some regions, but the difference is minimal. In contrast, mean fill deviates more clearly, especially at lower lags where it reduces autocorrelation. Overall, both linear interpolation and moving-average imputation preserve the temporal structure well, with no substantial difference between them.
+
+A similar pattern is observed for Class 1. Linear interpolation and moving-average imputation produce ACF curves that are nearly identical to the original, indicating that both methods preserve the temporal dependence structure effectively. Any differences between these two methods are very minor and not practically significant. Mean fill again shows the largest deviation, flattening the ACF and weakening the correlation structure.
+
 ## Imputation choice
 
 Based on the ACF comparison, which strategy would you use for downstream analysis?
 Justify your choice in 3–4 sentences. Are there situations where a different choice
 might be preferable?
+
+I would choose moving-average imputation for downstream analysis. The ACF results show that mean fill distorts the dependence structure, while both linear interpolation and moving-average fill closely match the original ACF. Although the difference between these two is small, moving-average fill is slightly preferable because it better preserves local structure using nearby observed values. However, linear interpolation would also be a reasonable alternative, especially when computational simplicity and speed are important.
 
 ---
 
