@@ -799,6 +799,42 @@ $$x_t^{(2)} = x_t + \varepsilon_t, \quad \varepsilon_t \sim \mathcal{N}(0,\,(0.5
 
 Compute the periodogram of the original and both noisy versions.
 
+```{python}
+alpha_1 = 0.2
+alpha_2 = 0.5
+n_selected = 10
+
+L = X_train.shape[1]
+
+selected_noise_indices = np.random.choice(X_train.shape[0], size=n_selected, replace=False)
+
+original_series_dict = {}
+noisy_series_a1_dict = {}
+noisy_series_a2_dict = {}
+
+original_periodograms = {}
+noisy_periodograms_a1 = {}
+noisy_periodograms_a2 = {}
+
+for idx in selected_noise_indices:
+    series = X_train[idx]
+    sigma_x = np.std(series, ddof=1)
+
+    eps1 = np.random.normal(0, alpha_1 * sigma_x, size=L)
+    eps2 = np.random.normal(0, alpha_2 * sigma_x, size=L)
+
+    noisy_a1 = series + eps1
+    noisy_a2 = series + eps2
+
+    original_series_dict[idx] = series
+    noisy_series_a1_dict[idx] = noisy_a1
+    noisy_series_a2_dict[idx] = noisy_a2
+
+    original_periodograms[idx] = (1 / L) * np.abs(np.fft.rfft(series)) ** 2
+    noisy_periodograms_a1[idx] = (1 / L) * np.abs(np.fft.rfft(noisy_a1)) ** 2
+    noisy_periodograms_a2[idx] = (1 / L) * np.abs(np.fft.rfft(noisy_a2)) ** 2
+```
+
 ## Peak degradation
 
 For each of the 10 series, record the dominant frequency $\omega^*$ and the
@@ -813,6 +849,58 @@ across all frequencies) for the original and both noise levels:
 *Does the dominant frequency $\omega^*$ shift under noise, or does the peak simply
 become less prominent?*
 
+```{python}
+snr_rows = []
+
+freqs = np.arange(0, L // 2 + 1) / L
+
+for idx in selected_noise_indices:
+
+    pxx_orig = original_periodograms[idx]
+
+    dom_idx_orig = np.argmax(pxx_orig[1:]) + 1
+    omega_orig = freqs[dom_idx_orig]
+    peak_orig = pxx_orig[dom_idx_orig]
+    median_orig = np.median(pxx_orig[1:])
+    snr_orig = peak_orig / median_orig
+
+    pxx_low = noisy_periodograms_a1[idx]
+
+    dom_idx_low = np.argmax(pxx_low[1:]) + 1
+    omega_low = freqs[dom_idx_low]
+    peak_low = pxx_low[dom_idx_low]
+    median_low = np.median(pxx_low[1:])
+    snr_low = peak_low / median_low
+
+    pxx_high = noisy_periodograms_a2[idx]
+
+    dom_idx_high = np.argmax(pxx_high[1:]) + 1
+    omega_high = freqs[dom_idx_high]
+    peak_high = pxx_high[dom_idx_high]
+    median_high = np.median(pxx_high[1:])
+    snr_high = peak_high / median_high
+
+    snr_rows.append({
+        "Series": idx,
+        "ω* (orig.)": omega_orig,
+        "SNR (orig.)": snr_orig,
+        "ω* (low)": omega_low,
+        "SNR (low)": snr_low,
+        "ω* (high)": omega_high,
+        "SNR (high)": snr_high
+    })
+
+snr_table = pd.DataFrame(snr_rows).sort_values("Series").reset_index(drop=True)
+
+for col in snr_table.columns:
+    if col != "Series":
+        snr_table[col] = snr_table[col].round(6)
+
+snr_table
+```
+
+The dominant frequency ω* remains stable across all noise levels, showing that its location is robust to noise. However, the signal to noise ratio (SNR) decreases significantly as noise increases, indicating that the peak becomes less prominent relative to the background spectrum. This suggests that noise does not shift the dominant frequency but instead reduces its detectability.
+
 ## Detectability threshold
 
 Considering the 10 series together: at what noise level (if any) does the dominant
@@ -822,11 +910,38 @@ Does this threshold depend on the class of the series?
 *Deliverable: one paragraph + supporting figure (e.g. box plot of SNR across 10
 series, by noise level).*
 
+```{python}
+snr_plot_df = pd.DataFrame({
+    "Original": snr_table["SNR (orig.)"],
+    "Low noise": snr_table["SNR (low)"],
+    "High noise": snr_table["SNR (high)"]
+})
+
+plt.figure(figsize=(8, 5))
+plt.boxplot(
+    [snr_plot_df["Original"], snr_plot_df["Low noise"], snr_plot_df["High noise"]],
+    labels=["Original", "Low noise", "High noise"]
+)
+
+plt.axhline(2, linestyle="--", linewidth=1.5, label="3 dB threshold (SNR=2)")
+
+plt.ylabel("SNR (peak / median power)")
+plt.title("SNR Distribution Across Noise Levels")
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+```
+
+The box plot shows a clear drop in SNR as noise increases from the original series to the low noise and high noise settings. However, even under the high noise condition, all 10 series remain far above the 3 dB threshold (equivalent to SNR = 2), so the dominant spectral peak never becomes indistinguishable from noise. This suggests that the spectral peak in the Coffee dataset is highly robust to the tested noise levels. No clear class dependent threshold is observed, since the selected series from both classes remain well above the detectability limit.
+
 ## Implication for analysis
 
 In 3–4 sentences: what does this robustness experiment tell you about the
 practical reliability of spectral features for classifying your dataset?
 Under what conditions would frequency-domain analysis fail as a discriminator?
+
+The results indicate that spectral features are highly robust to moderate noise, as the dominant frequency remains stable and detectable even when the signal to noise ratio decreases. This suggests that frequency domain representations can be reliable in noisy settings. However, since both classes exhibit nearly identical spectral characteristics, these features alone are not sufficient for classification. Frequency domain analysis would be less effective when classes share similar spectral profiles or when noise levels further reduce the prominence of spectral peaks.
 
 ---
 
