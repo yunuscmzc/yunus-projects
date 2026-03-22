@@ -329,6 +329,7 @@ the analyses that follow? (2–3 sentences)*
 
 ```{python}
 from statsmodels.tsa.stattools import adfuller
+np.random.seed(STUDENT_ID % 2**31)
 
 classes = np.unique(y_train)
 n_per_class = 5
@@ -385,6 +386,7 @@ Use your student ID as the random seed so your results are reproducible.
 ```
 
 ```{python}
+np.random.seed(STUDENT_ID % 2**31)
 X_train_missing = X_train.copy()
 
 L = X_train.shape[1]
@@ -412,6 +414,7 @@ Report the wall-clock time (or relative speed) of each strategy on your dataset.
 
 ```{python}
 import time
+np.random.seed(STUDENT_ID % 2**31)
 
 # Mean fill
 def mean_fill_all(X_missing):
@@ -601,6 +604,8 @@ the **class-average periodogram** as a bold line.
 
 ```{python}
 # Hint: use scipy.signal.periodogram or numpy.fft.rfft.
+np.random.seed(STUDENT_ID % 2**31)
+
 classes = np.unique(y_train)
 L = X_train.shape[1]
 n_per_class = 5
@@ -800,6 +805,8 @@ $$x_t^{(2)} = x_t + \varepsilon_t, \quad \varepsilon_t \sim \mathcal{N}(0,\,(0.5
 Compute the periodogram of the original and both noisy versions.
 
 ```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
 alpha_1 = 0.2
 alpha_2 = 0.5
 n_selected = 10
@@ -1089,7 +1096,20 @@ Address the following four prompts:
 
 4. **One open question** your analysis raised that this homework did not answer.
 
+Two key decisions in the analysis were the choice of imputation strategy and the use of smoothing in the frequency domain. For imputation, I selected the moving-average method over mean fill and linear interpolation. This decision was based on the ACF comparison: mean fill noticeably flattened the autocorrelation structure at low lags, while both linear interpolation and moving-average imputation preserved the original ACF almost perfectly. Although the difference between the latter two was small, moving-average imputation was slightly more consistent in maintaining local structure, especially in regions with gradual changes. For spectral analysis, I chose to use a smoothed periodogram with bandwidth L=9. The raw periodogram exhibited high variance and multiple sharp spikes, making it difficult to identify a stable dominant frequency. Smoothing reduced this variance and revealed a clear peak around ω ≈ 0.0175 (period ≈ 57), which was not as evident in the raw spectrum.
+
+A surprising finding was that the dominant frequency and overall spectral structure were nearly identical across both classes. Despite applying multiple analyses (ACF, periodogram, smoothed spectrum), no clear frequency-domain distinction emerged between the classes. This was unexpected because the classification task suggests that the classes should be distinguishable. It reveals that the Coffee dataset’s class differences are not driven by simple global spectral properties but likely by more subtle temporal patterns.
+
+One limitation of the analysis pipeline is the heavy reliance on highly compressed features. Reducing each time series to four summary statistics (dominant frequency, peak power, spectral concentration, and short-lag ACF) discards detailed temporal information. This likely explains the low classification accuracy (~0.57) compared to near-perfect results reported in the UCR archive. With more time, I would incorporate richer representations such as full-spectrum features, wavelet transforms, or shape-based features that better preserve local dynamics.
+
+An open question raised by this analysis is what specific characteristics actually differentiate the two classes. Since neither time-domain summaries nor frequency-domain features provided strong discrimination, it suggests that class differences may lie in localized shape patterns or phase variations rather than global structure. Investigating methods such as dynamic time warping (DTW) or subsequence-based feature extraction could help uncover these hidden distinctions.
+
+
 ---
 
 *IE 48B — Special Topics in Time Series Analytics, Spring 2026*
 *Mustafa Gökçe Baydoğan*
+
+## AI Usage Disclosure
+
+I used ChatGPT for assistance with code structuring, debugging, and clarifying concepts. All implementations and interpretations were reviewed and understood, and I can explain the methods and results independently.
