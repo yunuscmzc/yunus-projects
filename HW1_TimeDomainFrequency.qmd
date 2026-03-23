@@ -775,7 +775,7 @@ plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.show()
 ```
 
-Smoothing significantly reduces the high variance of the raw periodogram, making the dominant frequency much easier to identify. While the raw periodogram contains many sharp and noisy spikes, the smoothed version reveals a clear and stable peak around ω ≈ 0.0175 (period ≈ 57). This improves interpretability but comes at the cost of reduced spectral resolution, as finer frequency details and narrow peaks are smoothed out.
+Smoothing significantly reduces the high variance of the raw periodogram, making the dominant frequency easier to identify. While the raw periodogram is noisy, the smoothed version reveals a clear peak around ω ≈ 0.0175 (period ≈ 57), highlighting more localized structure compared to the very low-frequency component (ω ≈ 0.0035) emphasized in the class-average result. This improves interpretability but comes at the cost of reduced spectral resolution, as finer frequency details are smoothed out.
 
 ## Time domain vs. frequency domain
 
@@ -812,8 +812,17 @@ alpha_2 = 0.5
 n_selected = 10
 
 L = X_train.shape[1]
+classes = np.unique(y_train)
+n_per_class = n_selected // len(classes)
 
-selected_noise_indices = np.random.choice(X_train.shape[0], size=n_selected, replace=False)
+selected_noise_indices = []
+
+for cls in classes:
+    cls_indices = np.where(y_train == cls)[0]
+    chosen_cls = np.random.choice(cls_indices, size=n_per_class, replace=False)
+    selected_noise_indices.extend(chosen_cls)
+
+selected_noise_indices = np.array(selected_noise_indices)
 
 original_series_dict = {}
 noisy_series_a1_dict = {}
@@ -906,7 +915,7 @@ for col in snr_table.columns:
 snr_table
 ```
 
-The dominant frequency ω* remains stable across all noise levels, showing that its location is robust to noise. However, the signal to noise ratio (SNR) decreases significantly as noise increases, indicating that the peak becomes less prominent relative to the background spectrum. This suggests that noise does not shift the dominant frequency but instead reduces its detectability.
+The dominant frequency ω* remains stable across all noise levels, indicating that the location of the main spectral peak is robust to noise. However, the signal-to-noise ratio (SNR) decreases substantially as noise increases, showing that the peak becomes progressively less distinguishable from the background spectrum. This indicates that noise primarily affects detectability rather than frequency location. Because the sample was constructed in a class-balanced manner, both classes are equally represented in this analysis. The results do not show any clear systematic difference between classes in terms of how quickly SNR deteriorates with increasing noise. Therefore, the detectability threshold appears to be largely independent of class for this dataset, and instead depends mainly on the noise level itself.
 
 ## Detectability threshold
 
@@ -940,7 +949,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-The box plot shows a clear drop in SNR as noise increases from the original series to the low noise and high noise settings. However, even under the high noise condition, all 10 series remain far above the 3 dB threshold (equivalent to SNR = 2), so the dominant spectral peak never becomes indistinguishable from noise. This suggests that the spectral peak in the Coffee dataset is highly robust to the tested noise levels. No clear class dependent threshold is observed, since the selected series from both classes remain well above the detectability limit.
+The box plot shows a substantial decrease in SNR as noise increases from the original series to the low-noise and high-noise settings. However, even under the high-noise condition, all 10 series remain far above the 3 dB threshold (SNR = 2). In fact, the lowest observed SNR values under high noise are still on the order of hundreds, indicating that the dominant spectral peak remains clearly distinguishable from the background. Therefore, no detectability threshold is reached within the tested noise levels. Because the sample was constructed in a class-balanced manner and both classes exhibit similarly high SNR values across all noise levels, there is no evidence that the detectability threshold depends on class for this dataset.
 
 ## Implication for analysis
 
@@ -1069,7 +1078,7 @@ Compare your result to the UCR archive's reported accuracy for your dataset
 (listed on the archive webpage). What does the gap suggest about what information
 your 4 features are missing?
 
-Spectral features alone did not provide strong discrimination for this dataset, as reflected by the relatively low classification accuracy (≈0.57) compared to the UCR archive’s reported accuracy, which is close to perfect. This large performance gap suggests that the four extracted features capture only limited aspects of the time series, mainly global spectral and autocorrelation properties. In contrast, the UCR benchmark methods exploit more detailed temporal structure, such as local shape patterns and alignment information. Therefore, important discriminative information (particularly time-domain shape characteristics) is missing from the chosen feature representation.
+Spectral features alone did not provide strong discrimination for this dataset, as reflected by the relatively low classification accuracy (≈0.57) compared to the UCR archive’s reported performance. For the Coffee dataset, the UCR results table reports an error rate of 0.0000 under DTW-based methods, corresponding to a perfect accuracy of 1.00. This large performance gap suggests that the four extracted features capture only limited aspects of the time series, mainly global spectral and autocorrelation properties. In contrast, the UCR benchmark methods exploit more detailed temporal structure, such as local shape patterns and alignment information. Therefore, important discriminative information (particularly time-domain shape characteristics) is missing from the chosen feature representation.
 
 ---
 
@@ -1100,7 +1109,7 @@ Two key decisions in the analysis were the choice of imputation strategy and the
 
 A surprising finding was that the dominant frequency and overall spectral structure were nearly identical across both classes. Despite applying multiple analyses (ACF, periodogram, smoothed spectrum), no clear frequency-domain distinction emerged between the classes. This was unexpected because the classification task suggests that the classes should be distinguishable. It reveals that the Coffee dataset’s class differences are not driven by simple global spectral properties but likely by more subtle temporal patterns.
 
-One limitation of the analysis pipeline is the heavy reliance on highly compressed features. Reducing each time series to four summary statistics (dominant frequency, peak power, spectral concentration, and short-lag ACF) discards detailed temporal information. This likely explains the low classification accuracy (~0.57) compared to near-perfect results reported in the UCR archive. With more time, I would incorporate richer representations such as full-spectrum features, wavelet transforms, or shape-based features that better preserve local dynamics.
+One limitation of the analysis pipeline is the heavy reliance on highly compressed features. Reducing each time series to four summary statistics (dominant frequency, peak power, spectral concentration, and short-lag ACF) discards detailed temporal information. This likely explains the low classification accuracy (~0.57) compared to the UCR benchmark accuracy of 1.00 for the Coffee dataset. With more time, I would incorporate richer representations such as full-spectrum features, wavelet transforms, or shape-based features that better preserve local dynamics.
 
 An open question raised by this analysis is what specific characteristics actually differentiate the two classes. Since neither time-domain summaries nor frequency-domain features provided strong discrimination, it suggests that class differences may lie in localized shape patterns or phase variations rather than global structure. Investigating methods such as dynamic time warping (DTW) or subsequence-based feature extraction could help uncover these hidden distinctions.
 
