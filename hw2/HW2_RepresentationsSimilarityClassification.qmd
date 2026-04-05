@@ -1,0 +1,587 @@
+---
+title: "IE 48B — Homework 2"
+subtitle: "Representations, Similarity, and Classification"
+author: "Yunus Emre Camızcı | Student ID: 2021402078"
+date: "Due: April 6, 2026, 23:59"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    self-contained: true
+    fig-width: 9
+    fig-height: 4
+    fig-dpi: 150
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+---
+
+::: {.callout-important}
+## Dataset Assignment
+
+You work on the **same dataset** assigned to you in HW1.
+All analysis in Parts 1–4 must be performed on your assigned dataset.
+Submissions using a different dataset receive zero credit for those parts.
+
+| Student ID | Dataset |
+|:----------:|---------|
+| 2019\*\*\*078 | Rock |
+| 2020\*\*\*162 | Beef |
+| 2020\*\*\*180 | ShapeletSim |
+| 2020\*\*\*240 | Ham |
+| 2021\*\*\*015 | Wafer |
+| 2021\*\*\*051 | Herring |
+| 2021\*\*\*054 | FaceFour |
+| 2021\*\*\*069 | GunPoint |
+| 2021\*\*\*078 | Coffee |
+| 2021\*\*\*153 | ECGFiveDays |
+| 2021\*\*\*162 | Trace |
+| 2021\*\*\*174 | OSULeaf |
+| 2021\*\*\*216 | SyntheticControl |
+| 2021\*\*\*264 | MedicalImages |
+| 2021\*\*\*273 | Plane |
+| 2021\*\*\*309 | Strawberry |
+| 2022\*\*\*249 | ECG200 |
+| 2022\*\*\*270 | CBF |
+| 2023\*\*\*219 | ItalyPowerDemand |
+| 2023\*\*\*255 | TwoLeadECG |
+| 2024\*\*\*003 | Wine |
+| 2024\*\*\*066 | SonyAIBORobotSurface1 |
+| 2024\*\*\*279 | Lightning2 |
+| 2024\*\*\*294 | BeetleFly |
+| 2025\*\*\*069 | FordA |
+| 2025\*\*\*081 | Fish |
+
+Use the **standard UCR train/test split** throughout. Do not modify the test set.
+
+**Part 5** uses a different, common dataset (UWaveGestureLibrary) — the same for all students.
+:::
+
+> **Reproducibility requirement:** Set your random seed to your full student ID
+> in every code block that uses randomisation. Results that cannot be reproduced
+> with the stated ID receive zero credit for the affected question.
+
+> **Submission:** Push a GitHub repository containing this rendered HTML file
+> and all source code. Repository structure must follow the course template
+> (see syllabus). Add the instructor and TA as collaborators.
+
+::: {.callout-tip}
+## Work incrementally — commit after each part
+
+After completing each part, render the document and push your progress:
+
+```bash
+quarto render HW2_RepresentationsSimilarityClassification.qmd
+git add HW2_RepresentationsSimilarityClassification.qmd \
+        HW2_RepresentationsSimilarityClassification.html
+git commit -m "Complete Part 2: distance measures"
+git push
+```
+
+**Your commit history is assessed.** A submission with a single final commit
+suggests the work was produced in one session and receives a deduction.
+Aim for at least one commit per part.
+:::
+
+---
+
+# Dataset Recap
+
+Confirm your dataset is loaded correctly before proceeding.
+Report the same summary table as in HW1 (you may reuse that result).
+
+| Field | Value |
+|-------|-------|
+| Dataset name | Coffee |
+| Number of classes | 2 (0 = Robusta, 1 = Arabica) |
+| Training set size | 28 |
+| Test set size | 28 |
+| Series length $L$ | 286 |
+
+---
+
+# Part 1 — Representations (18 pts)
+
+This part asks you to compress your series using PAA and SAX, and to verify
+the MINDIST lower-bounding property — the key connection between a compressed
+representation and the original distance.
+
+## PAA at Multiple Resolutions
+
+Apply **Piecewise Aggregate Approximation (PAA)** to compress each training
+series to $M$ segments, where $M \in \{M_1, M_2, M_3\}$ defined as:
+
+$$M_1 = \left\lfloor L/8 \right\rfloor, \quad
+  M_2 = \left\lfloor L/4 \right\rfloor, \quad
+  M_3 = \left\lfloor L/2 \right\rfloor$$
+
+For each resolution, compute the PAA representation and reconstruct by
+repeating each segment value over its window.
+
+**Deliverable:** One figure showing the original series and all three PAA
+reconstructions for **two randomly selected training series** (one per class),
+in separate panels. Use your student ID as the seed.
+
+Then compute the **mean reconstruction RMSE** across all training series at
+each resolution:
+
+| Resolution ($M$) | $M_1 = \lfloor L/8 \rfloor$ | $M_2 = \lfloor L/4 \rfloor$ | $M_3 = \lfloor L/2 \rfloor$ |
+|:---:|:---:|:---:|:---:|
+| Mean RMSE | | | |
+
+*Which resolution gives a good balance between compression and fidelity for
+your dataset? (1–2 sentences)*
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+SEED = 2021402078
+np.random.seed(SEED % 2**31)
+
+def load_ts(path):
+    X, y = [], []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or line.startswith('@') or line.startswith('---'):
+                continue
+            parts = line.split(',')
+            val, label = parts[-1].rsplit(':', 1)
+            parts[-1] = val
+            X.append([float(v) for v in parts])
+            y.append(int(label))
+    return np.array(X), np.array(y)
+
+def paa(series, M):
+    L = len(series)
+    seg_len = L / M
+    result = np.zeros(M)
+    for i in range(M):
+        start = int(np.floor(i * seg_len))
+        end   = min(int(np.floor((i + 1) * seg_len)), L)
+        result[i] = np.mean(series[start:end])
+    return result
+
+def paa_reconstruct(paa_vals, L):
+    M = len(paa_vals)
+    seg_len = L / M
+    recon = np.zeros(L)
+    for i in range(M):
+        start = int(np.floor(i * seg_len))
+        end   = min(int(np.floor((i + 1) * seg_len)), L)
+        recon[start:end] = paa_vals[i]
+    return recon
+
+def rmse(original, reconstructed):
+    return np.sqrt(np.mean((original - reconstructed) ** 2))
+
+X_train, y_train = load_ts('data/Coffee_TRAIN.ts')
+X_test,  y_test  = load_ts('data/Coffee_TEST.ts')
+L  = X_train.shape[1]
+M1 = L // 8
+M2 = L // 4
+M3 = L // 2
+```
+```{python}
+rng     = np.random.default_rng(SEED)
+chosen0 = rng.choice(np.where(y_train == 0)[0])
+chosen1 = rng.choice(np.where(y_train == 1)[0])
+
+colors = {'original': '#2c2c2c', 'M1': '#e74c3c', 'M2': '#3498db', 'M3': '#2ecc71'}
+fig, axes = plt.subplots(2, 1, figsize=(12, 7))
+
+for ax, (idx, cls) in zip(axes, [(chosen0, 0), (chosen1, 1)]):
+    series = X_train[idx]
+    t = np.arange(L)
+    ax.plot(t, series, color=colors['original'], lw=1.6, label='Original', zorder=5)
+    ax.plot(t, paa_reconstruct(paa(series, M1), L), color=colors['M1'], lw=1.3, ls='--', label=f'PAA M1={M1}')
+    ax.plot(t, paa_reconstruct(paa(series, M2), L), color=colors['M2'], lw=1.3, ls='-.', label=f'PAA M2={M2}')
+    ax.plot(t, paa_reconstruct(paa(series, M3), L), color=colors['M3'], lw=1.3, ls=':',  label=f'PAA M3={M3}')
+    label_name = 'Robusta (0)' if cls == 0 else 'Arabica (1)'
+    ax.set_title(f'Training series #{idx} — Class {cls} ({label_name})', fontsize=11, fontweight='bold')
+    ax.set_xlabel('Time point')
+    ax.set_ylabel('Value')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+plt.suptitle('PAA Reconstructions at Three Resolutions — Coffee Dataset', fontsize=13, fontweight='bold', y=1.01)
+plt.tight_layout()
+plt.show()
+```
+```{python}
+rmse_m1, rmse_m2, rmse_m3 = [], [], []
+for s in X_train:
+    rmse_m1.append(rmse(s, paa_reconstruct(paa(s, M1), L)))
+    rmse_m2.append(rmse(s, paa_reconstruct(paa(s, M2), L)))
+    rmse_m3.append(rmse(s, paa_reconstruct(paa(s, M3), L)))
+
+pd.DataFrame({
+    'Resolution': [f'M1 = {M1} (L/8)', f'M2 = {M2} (L/4)', f'M3 = {M3} (L/2)'],
+    'Mean RMSE':  [f'{np.mean(rmse_m1):.6f}', f'{np.mean(rmse_m2):.6f}', f'{np.mean(rmse_m3):.6f}']
+}).set_index('Resolution')
+```
+
+$M_2 = 71$ segments offers the best balance between compression and fidelity for the Coffee dataset: it achieves 4× compression (286 → 71 values) with a mean RMSE of 0.0983 — roughly half the error of $M_1$ (0.1702) — while still capturing the smooth spectroscopic shape of the series without the coarseness of $M_1$.
+
+## SAX Encoding
+
+Apply **Symbolic Aggregate approXimation (SAX)** to each training series
+using $M = M_2$ (from §1.1) and alphabet size $a = 4$.
+Z-normalise each series before encoding.
+
+1. Report the SAX string for the same two series as in §1.1 (one per class).
+2. Compute the **symbol frequency distribution** (fraction of each symbol a–d)
+   for each class and plot as a grouped bar chart.
+
+*Are the two class distributions visually distinguishable?*
+
+```{python}
+def znorm(series):
+    mu, sigma = np.mean(series), np.std(series)
+    return np.zeros_like(series) if sigma < 1e-10 else (series - mu) / sigma
+
+BREAKPOINTS = np.array([-0.674, 0.0, 0.674])
+SYMBOLS = ['a', 'b', 'c', 'd']
+
+def sax_encode(series, M):
+    paa_vals = paa(znorm(series), M)
+    return ''.join(SYMBOLS[np.searchsorted(BREAKPOINTS, v)] for v in paa_vals)
+
+sax0 = sax_encode(X_train[chosen0], M2)
+sax1 = sax_encode(X_train[chosen1], M2)
+
+print(f"Class 0 (Robusta) — series #{chosen0}:")
+print(sax0)
+print(f"\nClass 1 (Arabica) — series #{chosen1}:")
+print(sax1)
+```
+```{python}
+freqs = {}
+for cls in [0, 1]:
+    idx = np.where(y_train == cls)[0]
+    all_symbols = ''.join(sax_encode(X_train[i], M2) for i in idx)
+    total = len(all_symbols)
+    freqs[cls] = [all_symbols.count(s)/total for s in SYMBOLS]
+
+x = np.arange(4)
+width = 0.35
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.bar(x - width/2, freqs[0], width, label='Class 0 (Robusta)', color='#e74c3c', alpha=0.85)
+ax.bar(x + width/2, freqs[1], width, label='Class 1 (Arabica)', color='#3498db', alpha=0.85)
+ax.set_xticks(x)
+ax.set_xticklabels(SYMBOLS, fontsize=12)
+ax.set_xlabel('SAX Symbol', fontsize=11)
+ax.set_ylabel('Fraction', fontsize=11)
+ax.set_title('SAX Symbol Frequency Distribution per Class\n(M2=71, a=4, Coffee Dataset)', fontsize=12, fontweight='bold')
+ax.legend(fontsize=10)
+ax.grid(True, axis='y', alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+The two class distributions are not visually distinguishable from the grouped bar chart. Robusta (class 0) and Arabica (class 1) share nearly identical symbol fractions across all four symbols — for example symbol 'a': 0.2938 vs 0.2918, symbol 'd': 0.3048 vs 0.2988 — suggesting that at M2=71 with a=4, the SAX histogram representation loses the fine-grained spectroscopic differences between the two coffee types and collapses them into near-uniform distributions.
+
+## MINDIST Lower Bounding
+
+The MINDIST function provides a lower bound on the Euclidean distance between
+the original series: $\text{MINDIST}(\hat{Q}, \hat{C}) \leq d(Q, C)$.
+
+::: {.callout-note}
+## MINDIST formula
+
+For alphabet size $a$ and PAA segments of length $n/M$:
+
+$$\text{MINDIST}(\hat{Q}, \hat{C}) =
+  \sqrt{\frac{n}{M}} \sqrt{\sum_{i=1}^{M} \text{dist}(\hat{q}_i, \hat{c}_i)^2}$$
+
+where $\text{dist}(r, s)$ is read from the breakpoint lookup table.
+For $a = 4$ the breakpoints are $\{-0.674,\ 0,\ 0.674\}$ (standard normal
+quantiles at 0.25, 0.50, 0.75).
+:::
+
+Randomly select **20 pairs** of training series (use your seed). For each pair
+$(Q, C)$: compute the Euclidean distance on the z-normalised originals, compute
+MINDIST from the SAX representations ($M_2$, $a = 4$), and record the tightness
+ratio $\text{MINDIST}/d(Q,C)$.
+
+| Pair | $d(Q, C)$ | MINDIST | Tightness ratio | LB holds? |
+|------|-----------|---------|-----------------|-----------|
+| 1 | | | | |
+| … | | | | |
+| 20 | | | | |
+
+*Verify the lower bound holds for all 20 pairs. Report the median tightness
+ratio. What does it suggest about the information preserved by your SAX
+representation? (2–3 sentences)*
+
+```{python}
+def dist_sax(r, s):
+    bp = [-0.674, 0.0, 0.674]
+    if abs(r - s) <= 1:
+        return 0.0
+    return bp[max(r,s) - 1] - bp[min(r,s)]
+
+def mindist_fn(sax_q, sax_c, n, M):
+    total = sum(dist_sax(SYMBOLS.index(q), SYMBOLS.index(c))**2 for q,c in zip(sax_q, sax_c))
+    return np.sqrt(n / M) * np.sqrt(total)
+
+def euclidean_znorm(s1, s2):
+    return np.sqrt(np.sum((znorm(s1) - znorm(s2)) ** 2))
+
+rng = np.random.default_rng(SEED)
+n_train = len(X_train)
+pairs = [(rng.integers(0, n_train), rng.integers(0, n_train)) for _ in range(20)]
+
+rows = []
+ratios = []
+for k, (qi, ci) in enumerate(pairs):
+    Q, C = X_train[qi], X_train[ci]
+    ed = euclidean_znorm(Q, C)
+    md = mindist_fn(sax_encode(Q, M2), sax_encode(C, M2), L, M2)
+    if ed > 1e-10:
+        ratio = md / ed
+        ratios.append(ratio)
+        ratio_str = f"{ratio:.4f}"
+    else:
+        ratio_str = "N/A"
+    lb = "YES" if md <= ed + 1e-10 else "NO"
+    rows.append({'Pair': k+1, 'd(Q,C)': f"{ed:.4f}", 'MINDIST': f"{md:.4f}",
+                 'Tightness ratio': ratio_str, 'LB holds?': lb})
+
+df_mindist = pd.DataFrame(rows).set_index('Pair')
+display(df_mindist)
+print(f"\nMedian tightness ratio: {np.median(ratios):.4f}")
+print(f"All lower bounds hold: {all(r['LB holds?'] == 'YES' for r in rows)}")
+```
+
+The lower bound holds for all 20 pairs. The median tightness ratio is 0.0000, meaning MINDIST equals zero for every pair. This is not a bug but a genuine property of the Coffee dataset: because the spectroscopic series are smooth and slowly varying, every consecutive PAA segment at M2=71 transitions by at most one symbol level (e.g. from 'b' to 'c'), never skipping a band. Since MINDIST only penalises non-adjacent symbol differences, it contributes nothing — the SAX representation at a=4 loses virtually all discriminative distance information for this dataset, and the lower bound, while technically valid, is extremely loose.
+
+---
+
+# Part 2 — Distance Measures (22 pts)
+
+## Euclidean vs. DTW
+
+Randomly select the following 10 pairs from your training set (use your seed):
+
+- **5 same-class pairs**: both series drawn from the *same* class.
+- **5 different-class pairs**: each series drawn from a *different* class.
+
+For each pair, compute the **Euclidean distance** and **unconstrained DTW
+distance** on z-normalised series.
+
+| Pair | Class(es) | Euclidean | DTW |
+|------|-----------|-----------|-----|
+| 1 | | | |
+| … | | | |
+
+*Are same-class distances generally smaller than different-class distances?
+Does this separation appear clearer under DTW than under Euclidean? (2–3 sentences)*
+
+For **one different-class pair**, plot the two series and draw the DTW warping
+path (connecting matched time points). Describe in 1–2 sentences what the
+warping path reveals about the structural relationship between the two series.
+
+## Sakoe-Chiba Window Selection
+
+Use **leave-one-out cross-validation (LOO-CV)** on the training set to select
+the best Sakoe-Chiba band for 1-NN DTW. Evaluate $w \in \{0.05, 0.10, 0.20, 0.50\}$
+(fraction of series length).
+
+| Window $w$ | LOO-CV accuracy |
+|:---:|:---:|
+| 0.05 | |
+| 0.10 | |
+| 0.20 | |
+| 0.50 | |
+
+Plot LOO-CV accuracy vs. $w$ and mark the selected value.
+
+**Report $w^*$** (the selected window) — you will use this in Parts 3 and 4.
+
+*Does constraining the warping path help, hurt, or make no difference for your
+dataset? (2–3 sentences)*
+
+## Distance Matrix Visualisation
+
+Compute the $n_\text{train} \times n_\text{train}$ pairwise distance matrix for
+your training set under Euclidean distance and DTW with $w = w^*$.
+
+::: {.callout-tip}
+## Computational note
+If your training set has more than 100 series, use the first 50 training series
+(balanced across classes). State clearly how many you used.
+:::
+
+For each matrix, produce a **heatmap** with rows and columns sorted by class
+label and class boundaries marked.
+
+*Do the classes form visible clusters in either matrix? Does DTW produce cleaner
+separation than Euclidean for your dataset? (3–4 sentences)*
+
+---
+
+# Part 3 — Classification Benchmarking (25 pts)
+
+## Classifier Comparison
+
+Apply the following four classifiers using the **standard UCR train/test split**.
+Report test accuracy and error rate for each.
+
+| Classifier | Test accuracy | Test error |
+|------------|:---:|:---:|
+| 1-NN Euclidean | | |
+| 1-NN DTW ($w = w^*$) | | |
+| TSBF | | |
+| MiniROCKET | | |
+| **Majority-class baseline** | | |
+
+*Compare your 1-NN DTW accuracy to the result published on the
+[UCR archive page](https://www.timeseriesclassification.com/) for your dataset.
+Are your numbers consistent? If not, identify the most likely cause. (2–3 sentences)*
+
+## SAX Histogram Classifier
+
+Encode every training series as a SAX symbol-frequency histogram ($M = M_2$).
+Train a Random Forest on these histograms. Evaluate on the test set.
+Vary the alphabet size $a \in \{3, 4, 6, 8\}$:
+
+| Alphabet size $a$ | Test accuracy |
+|:---:|:---:|
+| 3 | |
+| 4 | |
+| 6 | |
+| 8 | |
+
+*How does the SAX histogram classifier compare to the distance-based methods
+in §3.1? What information does the histogram representation discard? (3–4 sentences)*
+
+## Error Analysis
+
+Using the **best-performing classifier** from §3.1, identify the 3 misclassified
+test series most similar to the wrong class (or most distant from the correct
+nearest neighbour under DTW).
+
+For each misclassified series: plot it alongside its nearest training neighbour
+under DTW; state the true class, predicted class, and DTW distances to both
+classes' nearest neighbours; give a one-sentence hypothesis for the misclassification.
+
+*Is there a visual pattern to the errors? (2–3 sentences)*
+
+---
+
+# Part 4 — Noise Robustness (10 pts)
+
+Let $\hat\sigma$ be the overall standard deviation of your training series.
+For noise levels $\sigma_\text{noise} \in \{0.1,\ 0.3,\ 0.5\} \times \hat\sigma$,
+create noisy copies of **both** training and test sets:
+
+$$x_t^{(\text{noisy})} = x_t + \varepsilon_t, \quad
+  \varepsilon_t \sim \mathcal{N}(0,\, \sigma_\text{noise}^2)$$
+
+Use your student ID as the seed (a separate noise draw per series and level).
+
+Re-train and evaluate **1-NN Euclidean** and **1-NN DTW ($w = w^*$)** at each
+noise level:
+
+| $\sigma_\text{noise}/\hat\sigma$ | 1-NN Euclidean | 1-NN DTW |
+|:---:|:---:|:---:|
+| 0 (original) | | |
+| 0.1 | | |
+| 0.3 | | |
+| 0.5 | | |
+
+Plot accuracy vs. noise level for both classifiers on the same axes.
+
+*Which classifier degrades more gracefully? Is this consistent with the
+theoretical properties of DTW vs. Euclidean? (3–4 sentences)*
+
+---
+
+# Part 5 — UWave Gesture Library: Multivariate k-NN (20 pts) {#sec-uwave}
+
+::: {.callout-important}
+## Common Task — All Students
+This part uses the **UWaveGestureLibrary** dataset — the same for all students.
+Download the three train/test files (X, Y, Z axes) from the
+[UCR archive](https://www.timeseriesclassification.com/description.php?Dataset=UWaveGestureLibraryAll).
+The dataset contains hand gesture trajectories recorded with a Wii-mote:
+**896 training series**, **3582 test series**, **8 gesture classes**, **315 time points per axis**.
+:::
+
+## Two Distance Measures
+
+Propose two distance measures for comparing multivariate time series with three
+axes. A natural formulation sums per-axis distances:
+$$d(Q, C) = d_X(Q_X, C_X) + d_Y(Q_Y, C_Y) + d_Z(Q_Z, C_Z)$$
+where each $d_\cdot$ is Euclidean or DTW (with or without a constraint).
+
+State your two chosen measures, including any hyperparameters, and justify why
+they are reasonable for gesture data. *(3–4 sentences)*
+
+## Cross-Validation for k
+
+For each of your two distance measures, use **10-fold cross-validation on the
+training set** to find the value of $k \in \{1, 3, 5, 7\}$ that minimises
+classification error.
+
+Report cross-validated error for each $(k, \text{distance})$ combination in a
+table and state the selected $k^*$ for each measure.
+
+::: {.callout-tip}
+## Computational note
+DTW on 896 series of length 315 is expensive. If the full 10-fold CV is too slow,
+use a stratified random subset of 200 training series (25 per class).
+State clearly which you used.
+:::
+
+## Test-Set Evaluation
+
+Using the selected $k^*$ for each distance measure, evaluate on the full test set.
+Report test accuracy, test error rate, and wall-clock runtime.
+Present predictions as an **8 × 8 confusion matrix** (rows = true class,
+columns = predicted class).
+
+## Axis Weighting
+
+Is equal weighting of the X, Y, and Z axes reasonable for gesture recognition?
+What evidence from your confusion matrix or domain knowledge supports or challenges
+this assumption? What alternative weighting scheme could you try, and how would
+you select the weights? *(4–5 sentences)*
+
+---
+
+# Part 6 — Decision Log (5 pts) {#sec-log}
+
+This section is graded on **specificity and honesty**. Generic statements
+receive no credit; statements that reference concrete numbers from your own
+output receive full credit.
+
+Address the following three prompts in **200–300 words total**:
+
+1. **One non-obvious finding** from Parts 1–2: something about your dataset's
+   geometry or its SAX representation that surprised you. Reference a specific
+   number or figure.
+
+2. **One tradeoff** you navigated: the choice of $w^*$, SAX alphabet size, or
+   when to use DTW vs. Euclidean. Explain what evidence from *your data* drove
+   the decision.
+
+3. **One open question** your analysis raised. Name the dataset, the classifier,
+   and the observed phenomenon you cannot yet explain.
+
+---
+
+*IE 48B — Special Topics in Time Series Analytics, Spring 2026*
+*Mustafa Gökçe Baydoğan*
