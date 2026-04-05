@@ -879,6 +879,62 @@ Plot accuracy vs. noise level for both classifiers on the same axes.
 *Which classifier degrades more gracefully? Is this consistent with the
 theoretical properties of DTW vs. Euclidean? (3–4 sentences)*
 
+```{python}
+sigma_hat = np.std(X_train)
+noise_levels = [0.0, 0.1, 0.3, 0.5]
+best_w = 0.05
+
+results_euc, results_dtw = [], []
+
+for level in noise_levels:
+    sigma_noise = level * sigma_hat
+    if level == 0.0:
+        X_tr_noisy = X_train.copy()
+        X_te_noisy = X_test.copy()
+    else:
+        rng = np.random.default_rng(SEED + int(level * 100))
+        X_tr_noisy = X_train + rng.normal(0, sigma_noise, X_train.shape)
+        X_te_noisy = X_test  + rng.normal(0, sigma_noise, X_test.shape)
+
+    X_tr_z = np.array([znorm(x) for x in X_tr_noisy])
+    X_te_z = np.array([znorm(x) for x in X_te_noisy])
+
+    from sklearn.neighbors import KNeighborsClassifier
+    nn = KNeighborsClassifier(n_neighbors=1, metric='euclidean')
+    nn.fit(X_tr_z, y_train)
+    results_euc.append(nn.score(X_te_z, y_test))
+
+    preds_dtw = []
+    for test_s in X_te_z:
+        dists = [dtw_distance(test_s, znorm(X_tr_noisy[j]), window=best_w)
+                 for j in range(len(X_tr_noisy))]
+        preds_dtw.append(y_train[np.argmin(dists)])
+    results_dtw.append(np.mean(np.array(preds_dtw) == y_test))
+
+pd.DataFrame({
+    '$\\sigma_{\\mathrm{noise}}/\\hat{\\sigma}$': ['0 (original)', '0.1', '0.3', '0.5'],
+    '1-NN Euclidean': [f"{a:.4f}" for a in results_euc],
+    '1-NN DTW':       [f"{a:.4f}" for a in results_dtw]
+}).set_index('$\\sigma_{\\mathrm{noise}}/\\hat{\\sigma}$')
+```
+```{python}
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.plot(noise_levels, results_euc, 'o-', color='#e74c3c', lw=2, markersize=8, label='1-NN Euclidean')
+ax.plot(noise_levels, results_dtw, 's-', color='#3498db', lw=2, markersize=8, label='1-NN DTW ($w^*=0.05$)')
+ax.set_xlabel('$\\sigma_{\\mathrm{noise}} / \\hat{\\sigma}$', fontsize=12)
+ax.set_ylabel('Test Accuracy', fontsize=12)
+ax.set_title('Accuracy vs Noise Level — Coffee Dataset', fontsize=12, fontweight='bold')
+ax.set_xticks(noise_levels)
+ax.set_xticklabels(['0\n(original)', '0.1', '0.3', '0.5'])
+ax.set_ylim(0.45, 1.05)
+ax.legend(fontsize=10)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+DTW degrades more gracefully than Euclidean at higher noise levels: at $\sigma_\text{noise} = 0.5\hat{\sigma}$, DTW retains 75.00% accuracy while Euclidean collapses to 53.57% — barely above the majority-class baseline. At moderate noise ($\sigma = 0.3\hat{\sigma}$) both classifiers tie at 67.86%, but they diverge sharply at $\sigma = 0.5\hat{\sigma}$ where DTW's warping flexibility allows it to absorb noise-induced local distortions that throw off point-to-point Euclidean alignment. This is consistent with the theoretical expectation that DTW is more robust to noise because it can re-align time points to find the best match rather than being penalised by point-wise perturbations; however, the Coffee dataset is so clean at low noise that both classifiers perform identically at $\sigma = 0.1\hat{\sigma}$ before the difference emerges.
+
 ---
 
 # Part 5 — UWave Gesture Library: Multivariate k-NN (20 pts) {#sec-uwave}
