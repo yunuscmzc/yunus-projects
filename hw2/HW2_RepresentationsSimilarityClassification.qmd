@@ -650,6 +650,59 @@ Report test accuracy and error rate for each.
 [UCR archive page](https://www.timeseriesclassification.com/) for your dataset.
 Are your numbers consistent? If not, identify the most likely cause. (2–3 sentences)*
 
+```{python}
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import StandardScaler
+
+X_train_z = np.array([znorm(x) for x in X_train])
+X_test_z  = np.array([znorm(x) for x in X_test])
+
+# 1-NN Euclidean
+nn_euc = KNeighborsClassifier(n_neighbors=1, metric='euclidean')
+nn_euc.fit(X_train_z, y_train)
+acc_euc = nn_euc.score(X_test_z, y_test)
+
+# 1-NN DTW with w*=0.05
+best_w = 0.05
+preds_dtw = []
+for test_s in X_test_z:
+    dists = [dtw_distance(test_s, znorm(X_train[j]), window=best_w) for j in range(len(X_train))]
+    preds_dtw.append(y_train[np.argmin(dists)])
+acc_dtw = np.mean(np.array(preds_dtw) == y_test)
+
+# TSBF (pyts)
+from pyts.classification import TSBF
+tsbf = TSBF(random_state=2021402078)
+tsbf.fit(X_train, y_train)
+acc_tsbf = tsbf.score(X_test, y_test)
+
+# MiniROCKET (aeon)
+from aeon.classification.convolution_based import MiniRocketClassifier
+mr = MiniRocketClassifier(n_kernels=10000, random_state=2021402078)
+mr.fit(X_train, y_train)
+acc_mr = mr.score(X_test, y_test)
+
+# Majority-class baseline
+majority = np.bincount(y_train).argmax()
+acc_maj = np.mean(y_test == majority)
+
+results = {
+    '1-NN Euclidean':          acc_euc,
+    '1-NN DTW ($w^*=0.05$)':  acc_dtw,
+    'TSBF':                    acc_tsbf,
+    'MiniROCKET':              acc_mr,
+    'Majority-class baseline': acc_maj,
+}
+
+pd.DataFrame({
+    'Classifier': list(results.keys()),
+    'Test Accuracy': [f"{v:.4f}" for v in results.values()],
+    'Test Error':    [f"{1-v:.4f}" for v in results.values()]
+}).set_index('Classifier')
+```
+
+Our 1-NN DTW accuracy of 1.0000 (100%, 28/28 correct) is fully consistent with the result published on the UCR archive page for the Coffee dataset, which also reports 1-NN DTW at 100% test accuracy. All distance-based classifiers achieve perfect accuracy on this dataset, reflecting that Robusta and Arabica spectroscopic signatures are highly separable once z-normalised — the majority-class baseline at 53.57% confirms the dataset is balanced and the classifiers are genuinely discriminating rather than just predicting the majority.
+
 ## SAX Histogram Classifier
 
 Encode every training series as a SAX symbol-frequency histogram ($M = M_2$).
@@ -666,6 +719,40 @@ Vary the alphabet size $a \in \{3, 4, 6, 8\}$:
 *How does the SAX histogram classifier compare to the distance-based methods
 in §3.1? What information does the histogram representation discard? (3–4 sentences)*
 
+```{python}
+from scipy.stats import norm as scipy_norm
+from sklearn.ensemble import RandomForestClassifier
+
+def get_breakpoints(a):
+    return scipy_norm.ppf(np.linspace(0, 1, a+1)[1:-1])
+
+def sax_histogram(series, M, a):
+    bp = get_breakpoints(a)
+    symbols = np.searchsorted(bp, paa(znorm(series), M))
+    hist = np.zeros(a)
+    for s in symbols:
+        hist[s] += 1
+    return hist / M
+
+alphabet_sizes = [3, 4, 6, 8]
+sax_results = {}
+
+for a in alphabet_sizes:
+    H_train = np.array([sax_histogram(x, M2, a) for x in X_train])
+    H_test  = np.array([sax_histogram(x, M2, a) for x in X_test])
+    rf = RandomForestClassifier(n_estimators=200, random_state=2021402078 % 2**31)
+    rf.fit(H_train, y_train)
+    sax_results[a] = rf.score(H_test, y_test)
+
+pd.DataFrame({
+    'Alphabet size $a$': alphabet_sizes,
+    'Test Accuracy': [f"{sax_results[a]:.4f}" for a in alphabet_sizes],
+    'Test Error':    [f"{1-sax_results[a]:.4f}" for a in alphabet_sizes]
+}).set_index('Alphabet size $a$')
+```
+
+The SAX histogram classifier performs substantially worse than all distance-based methods in §3.1: even the best alphabet size (a=8, accuracy=0.8214) falls well short of the perfect 1.0000 achieved by 1-NN Euclidean and 1-NN DTW. Accuracy increases monotonically with alphabet size — from 0.6071 at a=3 to 0.8214 at a=8 — suggesting finer symbol resolution recovers more discriminative information, but the representation still loses too much to compete with distance-based approaches. The fundamental limitation is that the histogram discards all temporal ordering information: two series with identical symbol counts but completely different temporal arrangements produce the same feature vector. For Coffee spectroscopy data where the shape and location of absorption peaks carry the class signal, this loss of sequential structure is particularly damaging.
+
 ## Error Analysis
 
 Using the **best-performing classifier** from §3.1, identify the 3 misclassified
@@ -677,6 +764,92 @@ under DTW; state the true class, predicted class, and DTW distances to both
 classes' nearest neighbours; give a one-sentence hypothesis for the misclassification.
 
 *Is there a visual pattern to the errors? (2–3 sentences)*
+
+Since both 1-NN Euclidean and 1-NN DTW achieved perfect test accuracy (100%), 
+there are no misclassified series to analyse under those classifiers. We therefore 
+conduct error analysis using the best classifier that produced errors: the SAX 
+histogram Random Forest with a=8 (82.14% test accuracy).
+
+```{python}
+a_best = 8
+H_train = np.array([sax_histogram(x, M2, a_best) for x in X_train])
+H_test  = np.array([sax_histogram(x, M2, a_best) for x in X_test])
+rf_best = RandomForestClassifier(n_estimators=200, random_state=2021402078 % 2**31)
+rf_best.fit(H_train, y_train)
+preds_rf = rf_best.predict(H_test)
+
+misclassified = [(i, preds_rf[i], y_test[i]) for i in range(len(y_test)) if preds_rf[i] != y_test[i]]
+
+analysis = []
+for idx, pred, true in misclassified:
+    test_s = znorm(X_test[idx])
+    correct_idx = np.where(y_train == true)[0]
+    wrong_idx   = np.where(y_train == pred)[0]
+    d_correct_list = [dtw_distance(test_s, znorm(X_train[j]), window=best_w) for j in correct_idx]
+    d_wrong_list   = [dtw_distance(test_s, znorm(X_train[j]), window=best_w) for j in wrong_idx]
+    nn_correct = correct_idx[np.argmin(d_correct_list)]
+    nn_wrong   = wrong_idx[np.argmin(d_wrong_list)]
+    analysis.append((idx, int(true), int(pred),
+                     min(d_correct_list), min(d_wrong_list),
+                     int(nn_correct), int(nn_wrong)))
+
+analysis.sort(key=lambda x: x[3], reverse=True)
+top3 = analysis[:3]
+
+class_names = {0: 'Robusta', 1: 'Arabica'}
+fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+
+for ax, (test_idx, true, pred, d_correct, d_wrong, nn_correct, nn_wrong) in zip(axes, top3):
+    t = np.arange(L)
+    ax.plot(t, znorm(X_test[test_idx]),  color='#e74c3c', lw=1.8,
+            label=f'Test #{test_idx} — True: {class_names[true]}, Predicted: {class_names[pred]}')
+    ax.plot(t, znorm(X_train[nn_correct]), color='#3498db', lw=1.8, ls='--',
+            label=f'Nearest train #{nn_correct} — Class {true} ({class_names[true]})')
+    ax.set_title(
+        f'Test #{test_idx} | True: {class_names[true]} | Predicted: {class_names[pred]} | '
+        f'DTW to correct: {d_correct:.4f} | DTW to wrong: {d_wrong:.4f}',
+        fontsize=10, fontweight='bold')
+    ax.set_xlabel('Time point')
+    ax.set_ylabel('Z-normalised value')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+plt.suptitle('Error Analysis — 3 Most Distant Misclassified Test Series (SAX-RF, a=8)',
+             fontsize=12, fontweight='bold', y=1.01)
+plt.tight_layout()
+plt.show()
+```
+```{python}
+pd.DataFrame([{
+    'Test idx': t[0],
+    'True class': f"{t[1]} ({class_names[t[1]]})",
+    'Predicted': f"{t[2]} ({class_names[t[2]]})",
+    'DTW to correct NN': f"{t[3]:.4f}",
+    'DTW to wrong NN':   f"{t[4]:.4f}",
+    'Correct NN (train)': t[5],
+    'Wrong NN (train)':   t[6]
+} for t in top3]).set_index('Test idx')
+```
+
+**Test #21** (True: Arabica, Predicted: Robusta): The SAX histogram assigns nearly 
+identical symbol frequency profiles to this Arabica series and several Robusta 
+training series, suggesting this sample has an atypically flat spectroscopic profile 
+that overlaps with the Robusta distribution.
+
+**Test #0** (True: Robusta, Predicted: Arabica): Despite being visually close to its 
+correct Robusta neighbour (DTW=0.7896), the histogram representation strips away the 
+subtle amplitude differences in the 200–240 region that distinguish this series.
+
+**Test #11** (True: Robusta, Predicted: Arabica): The SAX histogram collapses temporal 
+ordering, making this Robusta series indistinguishable from Arabica in feature space 
+despite a low DTW distance of 0.6909 to the correct class.
+
+All three errors show the misclassified series visually very close to their correct 
+nearest neighbour under DTW — DTW distances to the correct class (0.69–0.82) are 
+all smaller than distances to the wrong class (1.00–1.14), confirming these are 
+failures of the histogram representation rather than genuine ambiguity. The consistent 
+pattern is that temporal ordering — which DTW exploits but histograms discard — is 
+the critical discriminative feature for Coffee.
 
 ---
 
