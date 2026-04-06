@@ -365,7 +365,7 @@ print(f"\nMedian tightness ratio: {np.median(ratios):.4f}")
 print(f"All lower bounds hold: {all(r['LB holds?'] == 'YES' for r in rows)}")
 ```
 
-The lower bound holds for all 20 pairs. The median tightness ratio is 0.0000, meaning MINDIST equals zero for every pair. This is not a bug but a genuine property of the Coffee dataset: because the spectroscopic series are smooth and slowly varying, every consecutive PAA segment at M2=71 transitions by at most one symbol level (e.g. from 'b' to 'c'), never skipping a band. Since MINDIST only penalises non-adjacent symbol differences, it contributes nothing — the SAX representation at a=4 loses virtually all discriminative distance information for this dataset, and the lower bound, while technically valid, is extremely loose.
+The lower bound holds for all 20 pairs. The median tightness ratio is 0.0000, meaning MINDIST equals zero for every pair. This is not a bug but a genuine property of the Coffee dataset: because the spectroscopic series are smooth and slowly varying, every consecutive PAA segment at M2=71 transitions by at most one symbol level (e.g. from 'b' to 'c'), never skipping a band. Since MINDIST only penalises non-adjacent symbol differences, it contributes nothing, the SAX representation at a=4 loses virtually all discriminative distance information for this dataset, and the lower bound, while technically valid, is extremely loose.
 
 ---
 
@@ -456,7 +456,7 @@ for k, (i, j, cls, ptype) in enumerate(all_pairs):
 df_pairs = pd.DataFrame(rows).set_index('Pair')
 df_pairs
 ```
-Same-class distances are generally smaller than different-class distances under both measures — same-class pairs average around 1.86 (Euclidean) and 1.07 (DTW), while different-class pairs average 2.71 and 1.63 respectively. The separation is noticeably clearer under DTW, as DTW consistently reduces within-class distances more aggressively than between-class ones by absorbing timing shifts, making the two groups more distinct.
+Same-class distances are generally smaller than different-class distances under both measures same-class pairs average around 1.86 (Euclidean) and 1.07 (DTW), while different-class pairs average 2.71 and 1.63 respectively. The separation is noticeably clearer under DTW, as DTW consistently reduces within-class distances more aggressively than between-class ones by absorbing timing shifts, making the two groups more distinct.
 
 ```{python}
 dc_i, dc_j = 2, 22
@@ -561,7 +561,7 @@ plt.show()
 print(f"Selected w* = {best_w}")
 ```
 
-All four window values yield identical LOO-CV accuracy of 0.9643 (27/28 correct), equal to the unconstrained DTW result. This means constraining the warping path makes no difference for the Coffee dataset — the discriminative DTW alignments between Robusta and Arabica spectroscopic series all fall within even the tightest 5% window, so no useful warping is being cut off. We select w∗=0.05w^* = 0.05
+All four window values yield identical LOO-CV accuracy of 0.9643 (27/28 correct), equal to the unconstrained DTW result. This means constraining the warping path makes no difference for the Coffee dataset the discriminative DTW alignments between Robusta and Arabica spectroscopic series all fall within even the tightest 5% window, so no useful warping is being cut off. We select w∗=0.05w^* = 0.05
 w∗=0.05 as it achieves the same accuracy with the least computational cost, and a tighter constraint is preferable when accuracy does not suffer.
 
 ## Distance Matrix Visualisation
@@ -627,7 +627,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-Both matrices show visible block structure with darker (smaller) values along the diagonal blocks corresponding to within-class pairs and lighter (larger) values in the off-diagonal blocks representing between-class pairs, confirming that the two classes form meaningful clusters in distance space. The within-class means are 2.00 (Robusta) and 1.61 (Arabica) under Euclidean, versus 1.11 and 0.97 under DTW, while between-class means are 2.51 (Euclidean) and 1.44 (DTW). DTW produces modestly cleaner separation in terms of the ratio between within-class and between-class distances, but the overall block structure is already clearly visible under Euclidean — consistent with Coffee being a relatively easy two-class spectroscopy dataset where timing shifts are minimal.
+Both matrices show visible block structure with darker (smaller) values along the diagonal blocks corresponding to within-class pairs and lighter (larger) values in the off-diagonal blocks representing between-class pairs, confirming that the two classes form meaningful clusters in distance space. The within-class means are 2.00 (Robusta) and 1.61 (Arabica) under Euclidean, versus 1.11 and 0.97 under DTW, while between-class means are 2.51 (Euclidean) and 1.44 (DTW). DTW produces modestly cleaner separation in terms of the ratio between within-class and between-class distances, but the overall block structure is already clearly visible under Euclidean consistent with Coffee being a relatively easy two-class spectroscopy dataset where timing shifts are minimal.
 
 ---
 
@@ -701,7 +701,7 @@ pd.DataFrame({
 }).set_index('Classifier')
 ```
 
-Our 1-NN DTW accuracy of 1.0000 (100%, 28/28 correct) is fully consistent with the result published on the UCR archive page for the Coffee dataset, which also reports 1-NN DTW at 100% test accuracy. All distance-based classifiers achieve perfect accuracy on this dataset, reflecting that Robusta and Arabica spectroscopic signatures are highly separable once z-normalised — the majority-class baseline at 53.57% confirms the dataset is balanced and the classifiers are genuinely discriminating rather than just predicting the majority.
+Our 1-NN DTW accuracy of 1.0000 (100%, 28/28 correct) is fully consistent with the result published on the UCR archive page for the Coffee dataset, which also reports 1-NN DTW at 100% test accuracy. All distance-based classifiers achieve perfect accuracy on this dataset, reflecting that Robusta and Arabica spectroscopic signatures are highly separable once z-normalised the majority-class baseline at 53.57% confirms the dataset is balanced and the classifiers are genuinely discriminating rather than just predicting the majority.
 
 ## SAX Histogram Classifier
 
@@ -845,10 +845,10 @@ ordering, making this Robusta series indistinguishable from Arabica in feature s
 despite a low DTW distance of 0.6909 to the correct class.
 
 All three errors show the misclassified series visually very close to their correct 
-nearest neighbour under DTW — DTW distances to the correct class (0.69–0.82) are 
+nearest neighbour under DTW-DTW distances to the correct class (0.69–0.82) are 
 all smaller than distances to the wrong class (1.00–1.14), confirming these are 
 failures of the histogram representation rather than genuine ambiguity. The consistent 
-pattern is that temporal ordering — which DTW exploits but histograms discard — is 
+pattern is that temporal ordering which DTW exploits but histograms discard is 
 the critical discriminative feature for Coffee.
 
 ---
@@ -933,7 +933,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-DTW degrades more gracefully than Euclidean at higher noise levels: at $\sigma_\text{noise} = 0.5\hat{\sigma}$, DTW retains 75.00% accuracy while Euclidean collapses to 53.57% — barely above the majority-class baseline. At moderate noise ($\sigma = 0.3\hat{\sigma}$) both classifiers tie at 67.86%, but they diverge sharply at $\sigma = 0.5\hat{\sigma}$ where DTW's warping flexibility allows it to absorb noise-induced local distortions that throw off point-to-point Euclidean alignment. This is consistent with the theoretical expectation that DTW is more robust to noise because it can re-align time points to find the best match rather than being penalised by point-wise perturbations; however, the Coffee dataset is so clean at low noise that both classifiers perform identically at $\sigma = 0.1\hat{\sigma}$ before the difference emerges.
+DTW degrades more gracefully than Euclidean at higher noise levels: at $\sigma_\text{noise} = 0.5\hat{\sigma}$, DTW retains 75.00% accuracy while Euclidean collapses to 53.57% barely above the majority-class baseline. At moderate noise ($\sigma = 0.3\hat{\sigma}$) both classifiers tie at 67.86%, but they diverge sharply at $\sigma = 0.5\hat{\sigma}$ where DTW's warping flexibility allows it to absorb noise-induced local distortions that throw off point-to-point Euclidean alignment. This is consistent with the theoretical expectation that DTW is more robust to noise because it can re-align time points to find the best match rather than being penalised by point-wise perturbations; however, the Coffee dataset is so clean at low noise that both classifiers perform identically at $\sigma = 0.1\hat{\sigma}$ before the difference emerges.
 
 ---
 
@@ -959,10 +959,10 @@ State your two chosen measures, including any hyperparameters, and justify why
 they are reasonable for gesture data. *(3–4 sentences)*
 
 We propose two distance measures, both based on summing per-axis distances across the three accelerometer axes. D1 (Sum-of-Euclidean): d(Q,C)=∑a∈{X,Y,Z}∥Qa−Ca∥2d(Q,C) = \sum_{a \in \{X,Y,Z\}} \|Q_a - C_a\|_2
-d(Q,C)=∑a∈{X,Y,Z}​∥Qa​−Ca​∥2​ on z-normalised axes — a natural baseline that treats all three axes equally and is computationally fast.
+d(Q,C)=∑a∈{X,Y,Z}​∥Qa​−Ca​∥2​ on z-normalised axes a natural baseline that treats all three axes equally and is computationally fast.
 D2 (Weighted Euclidean, wX=2w_X=2 wX​=2):
  the same sum but with the X-axis contribution doubled, i.e. d(Q,C)=2∥QX−CX∥2+∥QY−CY∥2+∥QZ−CZ∥2d(Q,C) = 2\|Q_X - C_X\|_2 + \|Q_Y - C_Y\|_2 + \|Q_Z - C_Z\|_2
-d(Q,C)=2∥QX​−CX​∥2​+∥QY​−CY​∥2​+∥QZ​−CZ​∥2​ — motivated by the fact that Wii-mote gesture trajectories are primarily horizontal movements captured by the X-axis accelerometer, so upweighting it may improve discrimination. Both are reasonable for gesture data as they are fast, parameter-light, and directly compare the acceleration profiles that define each gesture.
+d(Q,C)=2∥QX​−CX​∥2​+∥QY​−CY​∥2​+∥QZ​−CZ​∥2​ motivated by the fact that Wii-mote gesture trajectories are primarily horizontal movements captured by the X-axis accelerometer, so upweighting it may improve discrimination. Both are reasonable for gesture data as they are fast, parameter-light, and directly compare the acceleration profiles that define each gesture.
 
 ## Cross-Validation for k
 
@@ -1120,8 +1120,8 @@ What evidence from your confusion matrix or domain knowledge supports or challen
 this assumption? What alternative weighting scheme could you try, and how would
 you select the weights? *(4–5 sentences)*
 
-Equal weighting of the three axes is a reasonable default but not necessarily optimal for gesture recognition. The confusion matrices reveal that gestures G3–G6 are most frequently confused with each other, and these are gestures that differ primarily in the direction of horizontal motion captured by the X and Y axes rather than vertical Z-axis motion. Doubling the X-axis weight in D2 actually slightly reduces overall accuracy (94.42% vs 94.81%), suggesting that the X-axis is not uniquely dominant and that the Y and Z axes carry complementary discriminative information. An alternative weighting scheme would be to learn the weights via cross-validation on the training set — treating (wX,wY,wZw_X, w_Y, w_Z
-wX​,wY​,wZ​) as hyperparameters and searching over a grid — or to use per-axis variance as an automatic weight, assigning higher weight to the axis with greater inter-class variance.
+Equal weighting of the three axes is a reasonable default but not necessarily optimal for gesture recognition. The confusion matrices reveal that gestures G3–G6 are most frequently confused with each other, and these are gestures that differ primarily in the direction of horizontal motion captured by the X and Y axes rather than vertical Z-axis motion. Doubling the X-axis weight in D2 actually slightly reduces overall accuracy (94.42% vs 94.81%), suggesting that the X-axis is not uniquely dominant and that the Y and Z axes carry complementary discriminative information. An alternative weighting scheme would be to learn the weights via cross-validation on the training set treating (wX,wY,wZw_X, w_Y, w_Z
+wX​,wY​,wZ​) as hyperparameters and searching over a grid or to use per-axis variance as an automatic weight, assigning higher weight to the axis with greater inter-class variance.
 
 ---
 
@@ -1143,6 +1143,30 @@ Address the following three prompts in **200–300 words total**:
 
 3. **One open question** your analysis raised. Name the dataset, the classifier,
    and the observed phenomenon you cannot yet explain.
+
+
+
+1. One non-obvious finding
+The most surprising finding from Parts 1–2 was that MINDIST equalled zero for all 20 randomly selected training pairs in the Coffee dataset. Initially this seemed like a bug, but closer inspection of the SAX strings revealed that every consecutive pair of symbols in every Coffee series differed by at most one level for example, transitions like 'b'→'c' or 'c'→'d' but never 'a'→'c' or 'b'→'d'. Since MINDIST only penalises non-adjacent symbol differences, it contributed nothing for any pair. This is visible in the SAX strings themselves (e.g. series #0: baaaaaaaaaabbbccdddddcccccccccdcccccdddddcc...), which show gradual, smooth transitions consistent with the spectroscopic nature of the data. The median tightness ratio of 0.0000 across all pairs confirmed that the SAX representation at a=4a=4
+a=4, M2=71M_2=71
+M2​=71 retains essentially no discriminative distance information for this dataset.
+
+2. One tradeoff navigated
+The most consequential tradeoff was choosing the SAX alphabet size aa
+a for the histogram classifier in Part 3.2. Smaller alphabets compress more aggressively but lose fine-grained distinctions: at a=3a=3
+a=3 the classifier achieved only 60.71% accuracy, while at a=8a=8
+a=8 it reached 82.14%. The data drove this decision clearly as aa
+a increased, the symbol distribution became finer and the Random Forest could separate the two coffee types better. However, even at a=8a=8
+a=8 the classifier fell well short of the 100% achieved by 1-NN methods, confirming that no alphabet size can recover the temporal ordering information that histogram representations inherently discard. We selected a=8a=8
+a=8 as the best-performing setting while acknowledging this fundamental limitation.
+
+3. One open question
+The Coffee dataset raises an unexplained phenomenon: in Part 4, 1-NN DTW with w∗=0.05w^*=0.05
+w∗=0.05 degraded to 92.86% accuracy at noise level 0.1σ^0.1\hat\sigma
+0.1σ^, while 1-NN Euclidean remained at 100%. This contradicts the general expectation that DTW is more robust to noise than Euclidean distance. At higher noise levels (0.3σ^0.3\hat\sigma
+0.3σ^ and 0.5σ^0.5\hat\sigma
+0.5σ^) DTW recovered its advantage, reaching 75.00% versus 53.57% for Euclidean. We cannot yet explain why DTW was more sensitive than Euclidean at the lowest noise level on the Coffee dataset specifically it may relate to the tight w∗=0.05w^*=0.05
+w∗=0.05 constraint causing the warping to misalign slightly noisy but otherwise identical spectroscopic profiles, but this hypothesis has not been verified.
 
 ---
 
