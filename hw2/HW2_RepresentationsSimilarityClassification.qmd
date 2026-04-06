@@ -561,8 +561,7 @@ plt.show()
 print(f"Selected w* = {best_w}")
 ```
 
-All four window values yield identical LOO-CV accuracy of 0.9643 (27/28 correct), equal to the unconstrained DTW result. This means constraining the warping path makes no difference for the Coffee dataset the discriminative DTW alignments between Robusta and Arabica spectroscopic series all fall within even the tightest 5% window, so no useful warping is being cut off. We select w∗=0.05w^* = 0.05
-w∗=0.05 as it achieves the same accuracy with the least computational cost, and a tighter constraint is preferable when accuracy does not suffer.
+All four window values yield identical LOO-CV accuracy of 0.9643 (27/28 correct), equal to the unconstrained DTW result. This means constraining the warping path makes no difference for the Coffee dataset the discriminative DTW alignments between Robusta and Arabica spectroscopic series all fall within even the tightest 5% window, so no useful warping is being cut off. We select w∗=0.05 as it achieves the same accuracy with the least computational cost, and a tighter constraint is preferable when accuracy does not suffer.
 
 ## Distance Matrix Visualisation
 
@@ -751,7 +750,7 @@ pd.DataFrame({
 }).set_index('Alphabet size $a$')
 ```
 
-The SAX histogram classifier performs substantially worse than all distance-based methods in §3.1: even the best alphabet size (a=8, accuracy=0.8214) falls well short of the perfect 1.0000 achieved by 1-NN Euclidean and 1-NN DTW. Accuracy increases monotonically with alphabet size — from 0.6071 at a=3 to 0.8214 at a=8 — suggesting finer symbol resolution recovers more discriminative information, but the representation still loses too much to compete with distance-based approaches. The fundamental limitation is that the histogram discards all temporal ordering information: two series with identical symbol counts but completely different temporal arrangements produce the same feature vector. For Coffee spectroscopy data where the shape and location of absorption peaks carry the class signal, this loss of sequential structure is particularly damaging.
+The SAX histogram classifier performs substantially worse than all distance-based methods in §3.1: even the best alphabet size (a=8, accuracy=0.8214) falls well short of the perfect 1.0000 achieved by 1-NN Euclidean and 1-NN DTW. Accuracy increases monotonically with alphabet size from 0.6071 at a=3 to 0.8214 at a=8 suggesting finer symbol resolution recovers more discriminative information, but the representation still loses too much to compete with distance-based approaches. The fundamental limitation is that the histogram discards all temporal ordering information: two series with identical symbol counts but completely different temporal arrangements produce the same feature vector. For Coffee spectroscopy data where the shape and location of absorption peaks carry the class signal, this loss of sequential structure is particularly damaging.
 
 ## Error Analysis
 
@@ -1128,8 +1127,7 @@ What evidence from your confusion matrix or domain knowledge supports or challen
 this assumption? What alternative weighting scheme could you try, and how would
 you select the weights? *(4–5 sentences)*
 
-Equal weighting of the three axes is a reasonable default but not necessarily optimal for gesture recognition. The confusion matrices reveal that gestures G3–G6 are most frequently confused with each other, and these are gestures that differ primarily in the direction of horizontal motion captured by the X and Y axes rather than vertical Z-axis motion. Doubling the X-axis weight in D2 actually slightly reduces overall accuracy (94.42% vs 94.81%), suggesting that the X-axis is not uniquely dominant and that the Y and Z axes carry complementary discriminative information. An alternative weighting scheme would be to learn the weights via cross-validation on the training set treating (wX,wY,wZw_X, w_Y, w_Z
-wX​,wY​,wZ​) as hyperparameters and searching over a grid or to use per-axis variance as an automatic weight, assigning higher weight to the axis with greater inter-class variance.
+Equal weighting of the three axes is a reasonable default but not necessarily optimal for gesture recognition. The confusion matrices reveal that gestures G3–G6 are most frequently confused with each other, and these are gestures that differ primarily in the direction of horizontal motion captured by the X and Y axes rather than vertical Z-axis motion. Doubling the X-axis weight in D2 actually slightly reduces overall accuracy (94.42% vs 94.81%), suggesting that the X-axis is not uniquely dominant and that the Y and Z axes carry complementary discriminative information. An alternative weighting scheme would be to learn the weights via cross-validation on the training set treating (wX,wY,wZ​) as hyperparameters and searching over a grid or to use per-axis variance as an automatic weight, assigning higher weight to the axis with greater inter-class variance.
 
 ---
 
@@ -1155,26 +1153,13 @@ Address the following three prompts in **200–300 words total**:
 
 
 1. One non-obvious finding
-The most surprising finding from Parts 1–2 was that MINDIST equalled zero for all 20 randomly selected training pairs in the Coffee dataset. Initially this seemed like a bug, but closer inspection of the SAX strings revealed that every consecutive pair of symbols in every Coffee series differed by at most one level for example, transitions like 'b'→'c' or 'c'→'d' but never 'a'→'c' or 'b'→'d'. Since MINDIST only penalises non-adjacent symbol differences, it contributed nothing for any pair. This is visible in the SAX strings themselves (e.g. series #0: baaaaaaaaaabbbccdddddcccccccccdcccccdddddcc...), which show gradual, smooth transitions consistent with the spectroscopic nature of the data. The median tightness ratio of 0.0000 across all pairs confirmed that the SAX representation at a=4a=4
-a=4, M2=71M_2=71
-M2​=71 retains essentially no discriminative distance information for this dataset.
+The most surprising finding from Parts 1–2 was that MINDIST equalled zero for all 20 randomly selected training pairs in the Coffee dataset. Initially this seemed like a bug, but closer inspection of the SAX strings revealed that every consecutive pair of symbols in every Coffee series differed by at most one level for example, transitions like 'b'→'c' or 'c'→'d' but never 'a'→'c' or 'b'→'d'. Since MINDIST only penalises non-adjacent symbol differences, it contributed nothing for any pair. This is visible in the SAX strings themselves (e.g. series #0: baaaaaaaaaabbbccdddddcccccccccdcccccdddddcc...), which show gradual, smooth transitions consistent with the spectroscopic nature of the data. The median tightness ratio of 0.0000 across all pairs confirmed that the median tightness ratio of 0.0000 means MINDIST provides a completely loose lower bound for this dataset — it cannot approximate the true Euclidean distance at all. This does not mean SAX is useless as a representation, but it does mean MINDIST-based pruning would offer no speedup for Coffee series at these parameter settings.
 
 2. One tradeoff navigated
-The most consequential tradeoff was choosing the SAX alphabet size aa
-a for the histogram classifier in Part 3.2. Smaller alphabets compress more aggressively but lose fine-grained distinctions: at a=3a=3
-a=3 the classifier achieved only 60.71% accuracy, while at a=8a=8
-a=8 it reached 82.14%. The data drove this decision clearly as aa
-a increased, the symbol distribution became finer and the Random Forest could separate the two coffee types better. However, even at a=8a=8
-a=8 the classifier fell well short of the 100% achieved by 1-NN methods, confirming that no alphabet size can recover the temporal ordering information that histogram representations inherently discard. We selected a=8a=8
-a=8 as the best-performing setting while acknowledging this fundamental limitation.
+The most consequential tradeoff was choosing the SAX alphabet size a for the histogram classifier in Part 3.2. Smaller alphabets compress more aggressively but lose fine-grained distinctions: at a=3 the classifier achieved only 60.71% accuracy, while at a=8 it reached 82.14%. The data drove this decision clearly as a increased, the symbol distribution became finer and the Random Forest could separate the two coffee types better. However, even at a=8 the classifier fell well short of the 100% achieved by 1-NN methods, confirming that no alphabet size can recover the temporal ordering information that histogram representations inherently discard. We selected a=8 as the best-performing setting while acknowledging this fundamental limitation.
 
 3. One open question
-The Coffee dataset raises an unexplained phenomenon: in Part 4, 1-NN DTW with w∗=0.05w^*=0.05
-w∗=0.05 degraded to 92.86% accuracy at noise level 0.1σ^0.1\hat\sigma
-0.1σ^, while 1-NN Euclidean remained at 100%. This contradicts the general expectation that DTW is more robust to noise than Euclidean distance. At higher noise levels (0.3σ^0.3\hat\sigma
-0.3σ^ and 0.5σ^0.5\hat\sigma
-0.5σ^) DTW recovered its advantage, reaching 75.00% versus 53.57% for Euclidean. We cannot yet explain why DTW was more sensitive than Euclidean at the lowest noise level on the Coffee dataset specifically it may relate to the tight w∗=0.05w^*=0.05
-w∗=0.05 constraint causing the warping to misalign slightly noisy but otherwise identical spectroscopic profiles, but this hypothesis has not been verified.
+The Coffee dataset raises an unexplained phenomenon: in Part 4, 1-NN DTW with w∗=0.05 degraded to 92.86% accuracy at noise level 0.1σ^, while 1-NN Euclidean remained at 100%. This contradicts the general expectation that DTW is more robust to noise than Euclidean distance. At higher noise levels (0.3σ^ and 0.5σ^) DTW recovered its advantage, reaching 75.00% versus 53.57% for Euclidean. We cannot yet explain why DTW was more sensitive than Euclidean at the lowest noise level on the Coffee dataset specifically it may relate to the tight w∗=0.05 constraint causing the warping to misalign slightly noisy but otherwise identical spectroscopic profiles, but this hypothesis has not been verified.
 
 ---
 
