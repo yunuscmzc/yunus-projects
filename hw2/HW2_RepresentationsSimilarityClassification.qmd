@@ -958,11 +958,19 @@ where each $d_\cdot$ is Euclidean or DTW (with or without a constraint).
 State your two chosen measures, including any hyperparameters, and justify why
 they are reasonable for gesture data. *(3–4 sentences)*
 
-We propose two distance measures, both based on summing per-axis distances across the three accelerometer axes. D1 (Sum-of-Euclidean): d(Q,C)=∑a∈{X,Y,Z}∥Qa−Ca∥2d(Q,C) = \sum_{a \in \{X,Y,Z\}} \|Q_a - C_a\|_2
-d(Q,C)=∑a∈{X,Y,Z}​∥Qa​−Ca​∥2​ on z-normalised axes a natural baseline that treats all three axes equally and is computationally fast.
-D2 (Weighted Euclidean, wX=2w_X=2 wX​=2):
- the same sum but with the X-axis contribution doubled, i.e. d(Q,C)=2∥QX−CX∥2+∥QY−CY∥2+∥QZ−CZ∥2d(Q,C) = 2\|Q_X - C_X\|_2 + \|Q_Y - C_Y\|_2 + \|Q_Z - C_Z\|_2
-d(Q,C)=2∥QX​−CX​∥2​+∥QY​−CY​∥2​+∥QZ​−CZ​∥2​ motivated by the fact that Wii-mote gesture trajectories are primarily horizontal movements captured by the X-axis accelerometer, so upweighting it may improve discrimination. Both are reasonable for gesture data as they are fast, parameter-light, and directly compare the acceleration profiles that define each gesture.
+I propose two distance measures, both based on summing per-axis distances across the three accelerometer axes.
+
+**D1 — Sum-of-Euclidean (equal weights):**
+
+$$d(Q, C) = \|Q_X - C_X\|_2 + \|Q_Y - C_Y\|_2 + \|Q_Z - C_Z\|_2$$
+
+This is a natural baseline that treats all three axes equally on z-normalised series and is computationally fast.
+
+**D2 — Weighted Euclidean ($w_X = 2$):**
+
+$$d(Q, C) = 2\|Q_X - C_X\|_2 + \|Q_Y - C_Y\|_2 + \|Q_Z - C_Z\|_2$$
+
+The X-axis contribution is doubled, motivated by the fact that Wii-mote gesture trajectories are primarily horizontal movements captured by the X-axis accelerometer, so upweighting it may improve discrimination. Both measures are reasonable for gesture data as they are fast, parameter-light, and directly compare the acceleration profiles that define each gesture.
 
 ## Cross-Validation for k
 
