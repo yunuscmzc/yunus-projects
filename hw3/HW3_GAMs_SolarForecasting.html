@@ -2461,7 +2461,7 @@ window.Quarto = {
 <h2 data-number="1.1" class="anchored" data-anchor-id="data-collection-and-preparation-8-pts"><span class="header-section-number">1.1</span> Data Collection and Preparation (8 pts)</h2>
 <p>Download the solar generation data from EPIAS and the weather data from Open-Meteo. Merge them into a single hourly data frame and create useful derived columns.</p>
 <p>Describe your data collection process: which variables did you download, from which locations, and how did you handle merging, missing values, and timezone alignment? Report the final dimensions of your dataset. (3–5 sentences.)</p>
-<div id="641ef6b3" class="cell" data-execution_count="1">
+<div id="c113c321" class="cell" data-execution_count="1">
 <details class="code-fold">
 <summary>Show code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
@@ -2506,12 +2506,12 @@ Date range     : 2022-01-01 00:00:00+03:00 -&gt; 2026-03-31 23:00:00+03:00
 Missing values : 0</code></pre>
 </div>
 </div>
-<p>Hourly solar generation data were downloaded from the EPİAŞ Transparency Platform using the <code>eptr2</code> Python package (<code>ren-rt-gen</code> call), covering January 2022 through March 2026 in 51 monthly API requests. Weather data were obtained from the Open-Meteo Historical Weather API for three locations representing Turkey’s main solar capacity regions: Konya (37.87°N, 32.48°E), Gaziantep (37.07°N, 37.38°E), and İzmir (38.42°N, 27.14°E), with variables including shortwave radiation, direct radiation, cloud cover, temperature, precipitation, and wind speed. Both sources report in Turkey Standard Time (UTC+3), so no timezone shift was required before merging on the hourly datetime index. No missing values were found after the inner join. The final dataset contains <strong>14,040 rows and 34 columns</strong>, including the target variable <code>solar_mwh</code>, 18 location-specific weather columns, 6 location-averaged aggregates, and calendar features (hour, month, day-of-year, season, weekday).</p>
+<p>Hourly solar generation data were downloaded from the EPİAŞ Transparency Platform using the <code>eptr2</code> Python package (<code>rt-gen</code> call), covering January 2022 through March 2026 in 51 monthly API requests. Weather data were obtained from the Open-Meteo Historical Weather API for three locations representing Turkey’s main solar capacity regions: Konya (37.87°N, 32.48°E), Gaziantep (37.07°N, 37.38°E), and İzmir (38.42°N, 27.14°E), with variables including shortwave radiation, direct radiation, cloud cover, temperature, precipitation, and wind speed. Both sources report in Turkey Standard Time (UTC+3), so no timezone shift was required before merging on the hourly datetime index. No missing values were found after the inner join. The final dataset contains 37,224 rows and 35 columns, including the target variable <code>solar_mwh</code>, 18 location-specific weather columns, 6 location-averaged aggregates, and calendar features (hour, month, day-of-year, season, weekday).</p>
 </section>
 <section id="exploratory-analysis-12-pts" class="level2" data-number="1.2">
 <h2 data-number="1.2" class="anchored" data-anchor-id="exploratory-analysis-12-pts"><span class="header-section-number">1.2</span> Exploratory Analysis (12 pts)</h2>
 <p>Produce at least two visualisations that reveal the main patterns in solar generation: one showing the long-run behaviour (trend, annual seasonality) and one showing the within-day pattern and how it varies across seasons. Describe what you observe. (3–5 sentences total.)</p>
-<div id="c9065afe" class="cell" data-execution_count="2">
+<div id="d595f2a9" class="cell" data-execution_count="2">
 <details class="code-fold">
 <summary>Show code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>np.random.seed(STUDENT_ID <span class="op">%</span> <span class="dv">2</span><span class="op">**</span><span class="dv">31</span>)</span>
@@ -2556,7 +2556,7 @@ Missing values : 0</code></pre>
 </div>
 </div>
 </div>
-<div id="779b9083" class="cell" data-execution_count="3">
+<div id="7484c082" class="cell" data-execution_count="3">
 <details class="code-fold">
 <summary>Show code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>np.random.seed(STUDENT_ID <span class="op">%</span> <span class="dv">2</span><span class="op">**</span><span class="dv">31</span>)</span>
@@ -2597,7 +2597,7 @@ Missing values : 0</code></pre>
 </div>
 <p>The data show a strong and regular <strong>annual seasonal cycle</strong>: generation peaks in June–July when days are long and solar elevation is high, and drops sharply in December–January. The 30-day rolling mean confirms there is no meaningful upward or downward trend over the 2022–2026 period. Generation follows a clear <strong>bell-shaped diurnal curve</strong> in every season, peaking around solar noon (12:00–13:00 local time) and dropping to zero at night. Summer produces the highest peaks with the widest active window (roughly 05:00–20:00), while winter peaks are lower and confined to 09:00–15:00. The month-by-hour heatmap makes this interaction especially clear, directly motivating an <strong>interaction between hour and day-of-year</strong> as a smooth term in the GAM.</p>
 <p>Explore the relationship between the weather variables and solar generation. Use appropriate visualisations. Which weather variable(s) are the strongest predictors? Are the relationships linear or nonlinear? (3–5 sentences.)</p>
-<div id="051bf871" class="cell" data-execution_count="4">
+<div id="66a973a1" class="cell" data-execution_count="4">
 <details class="code-fold">
 <summary>Show code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>np.random.seed(STUDENT_ID <span class="op">%</span> <span class="dv">2</span><span class="op">**</span><span class="dv">31</span>)</span>
@@ -2632,7 +2632,7 @@ Missing values : 0</code></pre>
 </div>
 </div>
 </div>
-<div id="b473beee" class="cell" data-execution_count="5">
+<div id="3ec204cf" class="cell" data-execution_count="5">
 <details class="code-fold">
 <summary>Show code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>np.random.seed(STUDENT_ID <span class="op">%</span> <span class="dv">2</span><span class="op">**</span><span class="dv">31</span>)</span>
@@ -2682,7 +2682,7 @@ gaziantep_wind_speed_10m   -0.070
 izmir_cloud_cover          -0.067</code></pre>
 </div>
 </div>
-<p><strong>Shortwave radiation</strong> (GHI) is by far the strongest predictor of solar generation, with Pearson correlation well above 0.8 during daylight hours the relationship is positive but notably nonlinear, with increasing spread at high radiation values caused by cloud intermittency. <strong>Cloud cover</strong> is the strongest negative predictor (r ≈ −0.55), confirming that overcast conditions substantially suppress generation. <strong>Direct radiation</strong> behaves similarly to shortwave radiation and is also strongly positive. <strong>Temperature</strong> shows a weaker positive correlation that is largely driven by summer co-occurrence rather than a direct physical effect. The nonlinear shapes in the scatter plots motivate using <strong>smooth terms</strong> for radiation and cloud cover in the GAM rather than entering them linearly.</p>
+<p><strong>Shortwave radiation</strong> (GHI) is by far the strongest predictor of solar generation, with Pearson correlation well above 0.8 during daylight hours the relationship is positive but notably nonlinear, with increasing spread at high radiation values caused by cloud intermittency. <strong>Cloud cover</strong> is the strongest negative predictor (r ≈ −0.13), confirming that overcast conditions substantially suppress generation. <strong>Direct radiation</strong> behaves similarly to shortwave radiation and is also strongly positive. <strong>Temperature</strong> shows a weaker positive correlation that is largely driven by summer co-occurrence rather than a direct physical effect. The nonlinear shapes in the scatter plots motivate using <strong>smooth terms</strong> for radiation and cloud cover in the GAM rather than entering them linearly.</p>
 <hr>
 </section>
 </section>
@@ -2695,7 +2695,7 @@ izmir_cloud_cover          -0.067</code></pre>
 <li><strong>Training set:</strong> All data before January 1, 2026</li>
 <li><strong>Test set:</strong> January 1 – March 31, 2026</li>
 </ul>
-<div id="46dd8ac8" class="cell" data-execution_count="6">
+<div id="adf3e75f" class="cell" data-execution_count="6">
 <details class="code-fold">
 <summary>Show code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>np.random.seed(STUDENT_ID <span class="op">%</span> <span class="dv">2</span><span class="op">**</span><span class="dv">31</span>)</span>
@@ -2736,7 +2736,7 @@ Test set    : 2,160 observations (2026-01-01 to 2026-03-31)</code></pre>
 <section id="naive-and-linear-baselines-12-pts" class="level2" data-number="2.2">
 <h2 data-number="2.2" class="anchored" data-anchor-id="naive-and-linear-baselines-12-pts"><span class="header-section-number">2.2</span> Naive and Linear Baselines (12 pts)</h2>
 <p>Fit at least two baseline models that do <strong>not</strong> use smooth terms. Report the test RMSE for each baseline. Explain what each baseline captures and what it misses. What motivates moving to a GAM? (3–4 sentences.)</p>
-<div id="ae435890" class="cell" data-execution_count="7">
+<div id="218ba24e" class="cell" data-execution_count="7">
 <details class="code-fold">
 <summary>Show code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>np.random.seed(STUDENT_ID <span class="op">%</span> <span class="dv">2</span><span class="op">**</span><span class="dv">31</span>)</span>
