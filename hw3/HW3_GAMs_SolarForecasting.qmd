@@ -113,7 +113,7 @@ print(f"Date range     : {df['datetime'].min()} -> {df['datetime'].max()}")
 print(f"Missing values : {df.isnull().sum().sum()}")
 ```
 
-Hourly solar generation data were downloaded from the EPİAŞ Transparency Platform using the `eptr2` Python package (`ren-rt-gen` call), covering January 2022 through March 2026 in 51 monthly API requests. Weather data were obtained from the Open-Meteo Historical Weather API for three locations representing Turkey's main solar capacity regions: Konya (37.87°N, 32.48°E), Gaziantep (37.07°N, 37.38°E), and İzmir (38.42°N, 27.14°E), with variables including shortwave radiation, direct radiation, cloud cover, temperature, precipitation, and wind speed. Both sources report in Turkey Standard Time (UTC+3), so no timezone shift was required before merging on the hourly datetime index. No missing values were found after the inner join. The final dataset contains **14,040 rows and 34 columns**, including the target variable `solar_mwh`, 18 location-specific weather columns, 6 location-averaged aggregates, and calendar features (hour, month, day-of-year, season, weekday).
+Hourly solar generation data were downloaded from the EPİAŞ Transparency Platform using the `eptr2` Python package (`rt-gen` call), covering January 2022 through March 2026 in 51 monthly API requests. Weather data were obtained from the Open-Meteo Historical Weather API for three locations representing Turkey's main solar capacity regions: Konya (37.87°N, 32.48°E), Gaziantep (37.07°N, 37.38°E), and İzmir (38.42°N, 27.14°E), with variables including shortwave radiation, direct radiation, cloud cover, temperature, precipitation, and wind speed. Both sources report in Turkey Standard Time (UTC+3), so no timezone shift was required before merging on the hourly datetime index. No missing values were found after the inner join. The final dataset contains 37,224 rows and 35 columns, including the target variable `solar_mwh`, 18 location-specific weather columns, 6 location-averaged aggregates, and calendar features (hour, month, day-of-year, season, weekday).
 
 ## Exploratory Analysis (12 pts)
 
@@ -246,7 +246,7 @@ print("\nTop 5 negative correlations:")
 print(corr_series.head(5).round(3).to_string())
 ```
 
-**Shortwave radiation** (GHI) is by far the strongest predictor of solar generation, with Pearson correlation well above 0.8 during daylight hours the relationship is positive but notably nonlinear, with increasing spread at high radiation values caused by cloud intermittency. **Cloud cover** is the strongest negative predictor (r ≈ −0.55), confirming that overcast conditions substantially suppress generation. **Direct radiation** behaves similarly to shortwave radiation and is also strongly positive. **Temperature** shows a weaker positive correlation that is largely driven by summer co-occurrence rather than a direct physical effect. The nonlinear shapes in the scatter plots motivate using **smooth terms** for radiation and cloud cover in the GAM rather than entering them linearly.
+**Shortwave radiation** (GHI) is by far the strongest predictor of solar generation, with Pearson correlation well above 0.8 during daylight hours the relationship is positive but notably nonlinear, with increasing spread at high radiation values caused by cloud intermittency. **Cloud cover** is the strongest negative predictor (r ≈ −0.13), confirming that overcast conditions substantially suppress generation. **Direct radiation** behaves similarly to shortwave radiation and is also strongly positive. **Temperature** shows a weaker positive correlation that is largely driven by summer co-occurrence rather than a direct physical effect. The nonlinear shapes in the scatter plots motivate using **smooth terms** for radiation and cloud cover in the GAM rather than entering them linearly.
 
 ---
 
@@ -259,10 +259,23 @@ Split the data chronologically:
 - **Training set:** All data before January 1, 2026
 - **Test set:** January 1 – March 31, 2026
 
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+df["datetime_naive"] = df["datetime"].dt.tz_localize(None)
+
+train = df[df["datetime_naive"] < pd.Timestamp("2026-01-01")].copy()
+test  = df[(df["datetime_naive"] >= pd.Timestamp("2026-01-01")) & 
+           (df["datetime_naive"] <= pd.Timestamp("2026-03-31 23:00:00"))].copy()
+
+print(f"Training set: {len(train):,} observations ({train['datetime'].min().date()} to {train['datetime'].max().date()})")
+print(f"Test set    : {len(test):,} observations ({test['datetime'].min().date()} to {test['datetime'].max().date()})")
+```
+
 | Set | Number of hourly observations |
 |:---:|:---:|
-| Training | |
-| Test | |
+| Training | 35,064 |
+| Test | 2,160 |
 
 ## Naive and Linear Baselines (12 pts)
 
@@ -270,12 +283,49 @@ Fit at least two baseline models that do **not** use smooth terms. Report the
 test RMSE for each baseline. Explain what each baseline captures and what it
 misses. What motivates moving to a GAM? (3–4 sentences.)
 
-| Model | Test RMSE |
-|:------|:---------:|
-| *[Baseline 1]* | |
-| *[Baseline 2]* | |
 
-> *[Your interpretation here]*
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+import numpy as np
+
+def rmse(y_true, y_pred):
+    return np.sqrt(mean_squared_error(y_true, y_pred))
+
+# ── Baseline 1: Mean generation per month-hour combination ────────────────────
+month_hour_means = (train.groupby(["month", "hour"])["solar_mwh"]
+                        .mean()
+                        .reset_index()
+                        .rename(columns={"solar_mwh": "pred_b1"}))
+
+test_b1 = test.merge(month_hour_means, on=["month", "hour"], how="left")
+rmse_b1 = rmse(test_b1["solar_mwh"], test_b1["pred_b1"])
+print(f"Baseline 1 (Month-Hour Mean) Test RMSE: {rmse_b1:.2f} MWh")
+
+# ── Baseline 2: Linear regression with calendar + weather features ─────────────
+features = ["hour", "month", "day_of_year",
+            "avg_shortwave_radiation", "avg_cloud_cover", "avg_temperature_2m"]
+
+X_train = train[features].fillna(0)
+X_test  = test[features].fillna(0)
+y_train = train["solar_mwh"]
+y_test  = test["solar_mwh"]
+
+lr = LinearRegression()
+lr.fit(X_train, y_train)
+pred_b2 = lr.predict(X_test)
+rmse_b2 = rmse(y_test, pred_b2)
+print(f"Baseline 2 (Linear Regression)  Test RMSE: {rmse_b2:.2f} MWh")
+```
+
+| Model | Test RMSE |
+|:------|----------:|
+| Baseline 1: Month-Hour Mean | 576.62 |
+| Baseline 2: Linear Regression | 647.18 |
+
+Baseline 1 (month-hour mean) captures the average diurnal and seasonal cycle but completely ignores day-to-day weather variability on a cloudy summer day it will still predict the typical sunny summer value. Baseline 2 (linear regression with calendar and weather variables) improves on this by incorporating radiation and cloud cover, but forces all relationships to be strictly linear for example, it cannot capture the fact that solar generation is exactly zero at night regardless of temperature. Both baselines miss the nonlinear interaction between hour of day and time of year, where the same hour produces very different generation in June versus December. This motivates a GAM, which can fit smooth, nonlinear functions for each predictor and model the hour × day-of-year interaction directly.
 
 ---
 
