@@ -517,7 +517,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-The residuals over time show clear patterns large positive residuals during winter months indicate the model systematically underpredicts in winter, while the residuals vs fitted plot shows a fan shape confirming **heteroscedasticity**: variance increases with fitted values. The ACF plot reveals strong autocorrelation at lags 1–24, meaning consecutive hourly errors are not independent. The residual distribution is right-skewed with a heavy positive tail, indicating the model more often underpredicts large generation values.
+The residuals over time show clear patterns large positive residuals during winter months indicate the model systematically underpredicts in winter, while the residuals vs fitted plot shows a fan shape confirming heteroscedasticity: variance increases with fitted values. The ACF plot reveals strong autocorrelation at lags 1–24, meaning consecutive hourly errors are not independent. The residual distribution is right-skewed with a heavy positive tail, indicating the model more often underpredicts large generation values.
 
 **Refinement:** The main issue is overfitting from the tensor product while missing short-term variability. The refinement removes the tensor product, uses separate cyclic smooths for hour and day-of-year, and adds `avg_direct_radiation` (r=0.78 from EDA) with more knots to better capture its nonlinear shape.
 
@@ -562,7 +562,7 @@ performs best on the test set, and why? (2–3 sentences.)
 | Expanded GAM (+ weather + tensor product) | 551.25 |
 | Refined GAM (+ direct radiation, no tensor) | 528.09 |
 
-The **Initial GAM** performs best on the test set with an RMSE of 524.56 MWh, followed closely by the Refined GAM at 528.09 MWh. The Expanded GAM underperformed despite adding weather variables, likely because the tensor product interaction introduced overfitting on the training data. The Refined GAM recovers most of the loss by removing the tensor product and adding direct radiation as a separate smooth term, confirming that the choice of basis and interaction structure matters more than simply adding more predictors.
+The Initial GAM performs best on the test set with an RMSE of 524.56 MWh, followed closely by the Refined GAM at 528.09 MWh. The Expanded GAM underperformed despite adding weather variables, likely because the tensor product interaction introduced overfitting on the training data. The Refined GAM recovers most of the loss by removing the tensor product and adding direct radiation as a separate smooth term, confirming that the choice of basis and interaction structure matters more than simply adding more predictors.
 
 ---
 
@@ -576,13 +576,71 @@ Compute the RMSE for each day in the test set separately. Plot the daily RMSE
 as a time series. Identify the days where the model performs worst and
 investigate why. (3–4 sentences.)
 
-> *[Daily RMSE plot and investigation here]*
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# Best model is Initial GAM (RMSE 524.56)
+# Use pred_gam1 and y_test_gam1 from Part 3
+test_copy2 = test.copy().reset_index(drop=True)
+test_copy2["pred"] = pred_gam1
+test_copy2["actual"] = y_test_gam1
+
+# Daily RMSE
+daily_rmse = (test_copy2.groupby("date")
+              .apply(lambda x: np.sqrt(mean_squared_error(x["actual"], x["pred"])))
+              .reset_index()
+              .rename(columns={0: "daily_rmse"}))
+daily_rmse["date"] = pd.to_datetime(daily_rmse["date"])
+
+fig, ax = plt.subplots(figsize=(13, 5))
+ax.plot(daily_rmse["date"], daily_rmse["daily_rmse"], color="#4878CF", lw=1.5)
+ax.fill_between(daily_rmse["date"], daily_rmse["daily_rmse"], alpha=0.2, color="#4878CF")
+ax.axhline(daily_rmse["daily_rmse"].mean(), color="#D65F5F", lw=1.5, ls="--", label=f"Mean RMSE: {daily_rmse['daily_rmse'].mean():.1f} MWh")
+ax.set_xlabel("Date")
+ax.set_ylabel("Daily RMSE (MWh)")
+ax.set_title("Daily RMSE — Initial GAM (Test Set: Jan–Mar 2026)", fontweight="bold")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+
+# Worst days
+worst_days = daily_rmse.nlargest(5, "daily_rmse")
+print("5 worst days:")
+print(worst_days.to_string(index=False))
+```
+
+The daily RMSE plot shows errors increase substantially through the test period, with March 2026 having the worst performance (peak RMSE exceeding 1,250 MWh) compared to January which is more stable. This pattern reflects increasing solar generation in spring as actual generation grows, the calendar-only model's fixed seasonal smooth underpredicts on clear days and overpredicts on cloudy ones. The worst days correspond to high-variability weather transitions that the model cannot capture without weather inputs.
 
 Compare the predicted and actual **daily total** generation across the test
 period. Is the model better at predicting daily totals than individual hours?
 Why might this be the case? (2–3 sentences.)
 
-> *[Comparison and interpretation here]*
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# Daily totals: actual vs predicted
+daily_totals = test_copy2.groupby("date").agg(
+    actual_total=("actual", "sum"),
+    pred_total=("pred", "sum")
+).reset_index()
+daily_totals["date"] = pd.to_datetime(daily_totals["date"])
+
+daily_total_rmse = np.sqrt(mean_squared_error(daily_totals["actual_total"], daily_totals["pred_total"]))
+print(f"Hourly RMSE : 524.56 MWh")
+print(f"Daily total RMSE: {daily_total_rmse:.2f} MWh")
+
+fig, ax = plt.subplots(figsize=(13, 5))
+ax.plot(daily_totals["date"], daily_totals["actual_total"], label="Actual", color="#D65F5F", lw=2)
+ax.plot(daily_totals["date"], daily_totals["pred_total"], label="Predicted", color="#4878CF", lw=2, ls="--")
+ax.set_xlabel("Date")
+ax.set_ylabel("Daily total generation (MWh)")
+ax.set_title("Actual vs Predicted Daily Total Generation", fontweight="bold")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+The daily total plot reveals a critical weakness the predicted daily totals form an almost flat smooth curve while actual totals vary dramatically day-to-day (from ~5,000 to ~31,000 MWh). The model is not better at predicting daily totals in this case because the systematic underprediction on high-generation days and overprediction on low-generation days do not cancel out. The daily total RMSE reflects this structural bias. This confirms that weather variables are essential the calendar-only GAM captures only the average seasonal shape, not day-to-day variability driven by cloud cover and radiation.
 
 ## Detailed Day Analysis (12 pts)
 
@@ -590,19 +648,62 @@ Select one day where the model performs well and one where it performs poorly.
 For each day, plot the actual and predicted hourly generation side by side.
 What distinguishes the model's performance on these two days? (2–3 sentences.)
 
-> *[Good/bad day plots and interpretation here]*
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# Best and worst days from daily_rmse
+best_day  = daily_rmse.nsmallest(1, "daily_rmse")["date"].values[0]
+worst_day = daily_rmse.nlargest(1, "daily_rmse")["date"].values[0]
+
+print(f"Best day : {best_day} (RMSE: {daily_rmse[daily_rmse['date']==best_day]['daily_rmse'].values[0]:.1f} MWh)")
+print(f"Worst day: {worst_day} (RMSE: {daily_rmse[daily_rmse['date']==worst_day]['daily_rmse'].values[0]:.1f} MWh)")
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+for ax, day, label, color in zip(
+    axes,
+    [best_day, worst_day],
+    ["Best Day", "Worst Day"],
+    ["#6ACC65", "#D65F5F"]
+):
+    day_data = test_copy2[pd.to_datetime(test_copy2["date"]) == pd.Timestamp(day)]
+    ax.plot(day_data["hour"], day_data["actual"], label="Actual", color="black", lw=2)
+    ax.plot(day_data["hour"], day_data["pred"],   label="Predicted", color=color, lw=2, ls="--")
+    ax.set_xlabel("Hour of day")
+    ax.set_ylabel("Solar generation (MWh)")
+    ax.set_title(f"{label}: {pd.Timestamp(day).strftime('%Y-%m-%d')}", fontweight="bold")
+    ax.set_xticks(range(0, 24, 2))
+    ax.legend(frameon=False)
+
+plt.suptitle("Actual vs Predicted — Best and Worst Days", fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+On the best day (2026-03-22) the model closely tracks the diurnal shape, slightly underpredicting the peak by around 150 MWh the smooth bell-shaped actual curve aligns well with what a calendar-based smooth expects for late March. On the worst day (2026-03-11) the model massively underpredicts actual generation peaked at ~3,600 MWh while the model predicted only ~1,450 MWh. This was an exceptionally sunny day that generated far more than the average March day the calendar smooth represents. This confirms the fundamental limitation of a calendar-only GAM: it predicts the climatological average for each hour and day-of-year, but cannot respond to day-specific weather conditions like unusually high irradiance.
 
 Are there systematic differences in model accuracy across the three months in
 the test set? Report the monthly RMSE and relate any differences to the
 characteristics of solar generation in those months. (2–3 sentences.)
 
 | Month | Test RMSE |
-|:-----:|:---------:|
-| January | |
-| February | |
-| March | |
+|:-----:|----------------:|
+| January | 358.808783 |
+| February | 455.117171 |
+| March | 695.006790 |
 
-> *[Your interpretation here]*
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+monthly_rmse = (test_copy2.groupby("month")
+                .apply(lambda x: np.sqrt(mean_squared_error(x["actual"], x["pred"])))
+                .reset_index()
+                .rename(columns={0: "rmse"}))
+monthly_rmse["month_name"] = monthly_rmse["month"].map({1:"January", 2:"February", 3:"March"})
+print(monthly_rmse[["month_name","rmse"]].to_string(index=False))
+```
+
+January has the lowest RMSE at 358.81 MWh because winter generation is low and stable the calendar smooth captures the average well when day-to-day variability is limited. February increases to 455.12 MWh as days lengthen and generation becomes more variable. March has by far the worst RMSE at 695.01 MWh because spring brings rapidly increasing generation with high day-to-day variability driven by changing weather as confirmed by the worst day analysis (2026-03-11) where actual generation reached 3,600 MWh against a prediction of only 1,450 MWh. This progression directly motivates incorporating weather variables into future model iterations.
 
 ---
 
@@ -625,4 +726,14 @@ from your analysis.
    specific — name the variable or technique and explain how it would address
    a weakness you observed.
 
-> *[Your decision log here]*
+**1. Model building narrative**
+
+The progression from baseline to best model was driven by specific diagnostic results at each step. The month-hour mean baseline (RMSE: 576.62 MWh) established that calendar structure alone captures meaningful signal predicting the average generation for each hour-month combination already beats a naive overall mean. Moving to linear regression (RMSE: 647.18 MWh) was actually worse, revealing that forcing linear relationships on inherently nonlinear predictors like shortwave radiation actively harms performance. This motivated the Initial GAM with cyclic cubic splines for hour (k=24) and day-of-year (k=20), which achieved the best test RMSE of 524.56 MWh. The partial dependence plots confirmed the smooth terms captured the expected bell-shaped diurnal curve and summer peak seasonal pattern from EDA. The Expanded GAM added weather covariates and a tensor product interaction, but RMSE worsened to 551.25 MWh the diagnostic plots showed the tensor product was overfitting. The Refined GAM removed the tensor product and added direct radiation as a separate smooth term, recovering to 528.09 MWh but still not beating the Initial GAM, suggesting the weather terms add noise rather than signal when the tensor product is absent.
+
+**2. One surprising finding**
+
+The most unexpected result was that adding weather variables shortwave radiation, cloud cover, and temperature made the model worse rather than better (RMSE increased from 524.56 to 551.25 MWh). The correlation analysis in Part 1 showed shortwave radiation had r=0.81 with solar generation, the strongest predictor in the dataset, so an improvement seemed certain. The partial dependence plot for shortwave radiation showed a sensible nonlinear positive shape, yet the overall fit deteriorated. Investigating further, the daily total generation plot revealed the calendar-only model already captures the seasonal mean well, and the weather terms introduce additional variance without reducing the systematic bias. This suggests the three-location average weather may be too noisy a proxy for actual generation conditions across all of Turkey.
+
+**3. Limitations**
+
+The best model's main limitation is that it predicts the climatological average for each hour and day-of-year combination rather than responding to actual weather conditions as shown starkly by the worst day analysis where actual generation on 2026-03-11 reached 3,600 MWh while the model predicted only 1,450 MWh. The strong autocorrelation in residuals at lags 1-24 (visible in the ACF plot) indicates the model misses short-term persistence in weather states. To address this, I would add lagged radiation observations as predictors specifically `shortwave_radiation` from the previous 1-3 hours which would allow the model to condition on current weather state rather than only calendar position. Additionally, replacing the three-location weather average with a capacity-weighted spatial average across actual solar plant locations in Turkey would reduce the noise introduced by geographically mismatched weather stations.
