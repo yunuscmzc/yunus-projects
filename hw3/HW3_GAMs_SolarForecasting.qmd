@@ -339,10 +339,56 @@ partial dependence plots. Do the estimated shapes align with the patterns from
 your EDA? (2–3 sentences.)
 
 | Model | Test RMSE |
-|:------|:---------:|
-| Initial GAM | |
+|:------|----------:|
+| Initial GAM | 524.56 |
 
-> *[Model specification, partial dependence plots, and interpretation here]*
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+from pygam import LinearGAM, s, te
+from sklearn.metrics import mean_squared_error
+
+# Features for initial GAM — calendar only
+# s(hour, basis='cp') = cyclic cubic spline (periodic, wraps at 24)
+# s(day_of_year, basis='cp') = cyclic cubic spline (periodic, wraps at 365)
+# te(hour, day_of_year) = tensor product interaction
+
+X_train_gam1 = train[["hour", "day_of_year"]].values
+X_test_gam1  = test[["hour", "day_of_year"]].values
+y_train_gam1 = train["solar_mwh"].values
+y_test_gam1  = test["solar_mwh"].values
+
+gam1 = LinearGAM(
+    s(0, n_splines=24, spline_order=3, basis='cp') +  # hour (cyclic, k=24)
+    s(1, n_splines=20, spline_order=3, basis='cp')    # day_of_year (cyclic, k=20)
+).fit(X_train_gam1, y_train_gam1)
+
+pred_gam1 = gam1.predict(X_test_gam1)
+pred_gam1 = np.clip(pred_gam1, 0, None)
+rmse_gam1 = np.sqrt(mean_squared_error(y_test_gam1, pred_gam1))
+print(f"Initial GAM Test RMSE: {rmse_gam1:.2f} MWh")
+
+# Partial dependence plots
+fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+titles = ["Hour of Day (cyclic, k=24)", "Day of Year (cyclic, k=20)"]
+
+for i, (ax, title) in enumerate(zip(axes, titles)):
+    XX = gam1.generate_X_grid(term=i)
+    ax.plot(XX[:, i], gam1.partial_dependence(term=i, X=XX), color="#D65F5F", lw=2.5)
+    ax.fill_between(XX[:, i],
+                    *gam1.partial_dependence(term=i, X=XX, width=0.95)[1].T,
+                    alpha=0.2, color="#D65F5F")
+    ax.set_title(title, fontweight="bold")
+    ax.set_xlabel(["Hour", "Day of Year"][i])
+    ax.set_ylabel("Partial effect (MWh)")
+    ax.axhline(0, color="black", lw=0.8, ls="--")
+
+plt.suptitle("Initial GAM — Partial Dependence Plots", fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+The initial GAM uses two cyclic cubic spline smooth terms: `s(hour, k=24)` capturing the diurnal generation cycle, and `s(day_of_year, k=20)` capturing the annual seasonality both specified as cyclic bases since these variables wrap around. The partial dependence plot for hour shows a clean bell-shaped peak around midday, perfectly consistent with the diurnal patterns observed in EDA. The day-of-year smooth captures the summer peak and winter trough, also matching the annual seasonality plot from Part 1. However, this model cannot capture the interaction between hour and season the same smooth hour effect is applied regardless of time of year which motivates adding a tensor product term in the expanded GAM.
 
 ## Expanded GAM (10 pts)
 
@@ -355,10 +401,67 @@ for the new terms. How much did the additional terms improve the model?
 (2–3 sentences.)
 
 | Model | Test RMSE |
-|:------|:---------:|
-| Expanded GAM | |
+|:------|----------:|
+| Expanded GAM | 551.25 |
 
-> *[Model specification, partial dependence plots, and interpretation here]*
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# Expanded GAM: calendar + weather covariates + tensor product interaction
+# te(hour, day_of_year) captures the hour x season interaction from EDA
+# s(avg_shortwave_radiation) — strongest predictor (r=0.79)
+# s(avg_cloud_cover) — strongest negative predictor
+# s(avg_temperature_2m) — secondary predictor
+
+X_train_gam2 = train[["hour", "day_of_year", "avg_shortwave_radiation",
+                        "avg_cloud_cover", "avg_temperature_2m"]].values
+X_test_gam2  = test[["hour", "day_of_year", "avg_shortwave_radiation",
+                       "avg_cloud_cover", "avg_temperature_2m"]].values
+y_train_gam2 = train["solar_mwh"].values
+y_test_gam2  = test["solar_mwh"].values
+
+gam2 = LinearGAM(
+    te(0, 1, n_splines=[24, 20], spline_order=3) +  # tensor: hour x day_of_year
+    s(2, n_splines=20, spline_order=3) +              # avg_shortwave_radiation
+    s(3, n_splines=15, spline_order=3) +              # avg_cloud_cover
+    s(4, n_splines=15, spline_order=3)                # avg_temperature_2m
+).fit(X_train_gam2, y_train_gam2)
+
+pred_gam2 = gam2.predict(X_test_gam2)
+pred_gam2 = np.clip(pred_gam2, 0, None)
+rmse_gam2 = np.sqrt(mean_squared_error(y_test_gam2, pred_gam2))
+print(f"Expanded GAM Test RMSE: {rmse_gam2:.2f} MWh")
+
+# Partial dependence plots for the new weather terms (terms 1, 2, 3)
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+term_info = [
+    (1, 2, "Avg. Shortwave Radiation (W/m²)"),
+    (2, 3, "Avg. Cloud Cover (%)"),
+    (3, 4, "Avg. Temperature (°C)"),
+]
+
+for ax, (term_idx, col_idx, xlabel) in zip(axes, term_info):
+    XX = gam2.generate_X_grid(term=term_idx)
+    ax.plot(XX[:, col_idx], gam2.partial_dependence(term=term_idx, X=XX),
+            color="#4878CF", lw=2.5)
+    ax.fill_between(XX[:, col_idx],
+                    *gam2.partial_dependence(term=term_idx, X=XX, width=0.95)[1].T,
+                    alpha=0.2, color="#4878CF")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Partial effect (MWh)")
+    ax.axhline(0, color="black", lw=0.8, ls="--")
+
+axes[0].set_title("s(shortwave_radiation, k=20)", fontweight="bold")
+axes[1].set_title("s(cloud_cover, k=15)", fontweight="bold")
+axes[2].set_title("s(temperature_2m, k=15)", fontweight="bold")
+
+plt.suptitle("Expanded GAM — Weather Term Partial Dependence Plots",
+             fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+The expanded GAM adds a tensor product interaction `te(hour, day_of_year, k=[24,20])` to capture the hour-by-season interaction identified in EDA, plus smooth terms for the three strongest weather predictors: shortwave radiation, cloud cover, and temperature. The shortwave radiation partial dependence shows a strongly nonlinear positive relationship that steepens sharply at high radiation values, confirming a linear term would have been inadequate. The cloud cover smooth shows that generation is highest under clear skies (0% cloud) and decreases nonlinearly as coverage increases. Temperature shows a negative effect at cold temperatures crossing zero around 10°C and rising steeply above 30°C, reflecting summer co-occurrence rather than a direct physical effect. Despite adding weather terms, the expanded GAM RMSE of 551.25 MWh is slightly worse than the initial GAM (524.56 MWh), suggesting the tensor product interaction may be causing overfitting or that the weather terms are not adding clean signal beyond what the calendar terms already capture this will be investigated in the diagnostics step.
 
 ## Diagnostics and Refinement (10 pts)
 
@@ -369,22 +472,97 @@ Present your diagnostic plots and describe what they reveal. Based on your
 findings, propose and implement **at least one refinement** to the model.
 Report the test RMSE before and after refinement.
 
-> *[Diagnostic plots, description, and refinement here]*
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# ── Residuals from expanded GAM ────────────────────────────────────────────────
+residuals = y_test_gam2 - pred_gam2
+test_copy = test.copy().reset_index(drop=True)
+test_copy["residual"] = residuals
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+# Panel 1: Residuals over time
+ax = axes[0, 0]
+ax.plot(test_copy["datetime"], test_copy["residual"], alpha=0.5, lw=0.8, color="#4878CF")
+ax.axhline(0, color="black", lw=1, ls="--")
+ax.set_xlabel("Date")
+ax.set_ylabel("Residual (MWh)")
+ax.set_title("Residuals Over Time", fontweight="bold")
+
+# Panel 2: Residuals vs fitted
+ax2 = axes[0, 1]
+ax2.scatter(pred_gam2, residuals, alpha=0.3, s=5, color="#D65F5F")
+ax2.axhline(0, color="black", lw=1, ls="--")
+ax2.set_xlabel("Fitted values (MWh)")
+ax2.set_ylabel("Residual (MWh)")
+ax2.set_title("Residuals vs Fitted (Heteroscedasticity Check)", fontweight="bold")
+
+# Panel 3: ACF
+from statsmodels.graphics.tsaplots import plot_acf
+plot_acf(residuals, lags=48, ax=axes[1, 0], color="#4878CF")
+axes[1, 0].set_title("ACF of Residuals (48 lags)", fontweight="bold")
+axes[1, 0].set_xlabel("Lag (hours)")
+
+# Panel 4: Residual histogram
+ax4 = axes[1, 1]
+ax4.hist(residuals, bins=60, color="#6ACC65", edgecolor="white", alpha=0.85)
+ax4.axvline(0, color="black", lw=1, ls="--")
+ax4.set_xlabel("Residual (MWh)")
+ax4.set_ylabel("Count")
+ax4.set_title("Residual Distribution", fontweight="bold")
+
+plt.suptitle("Expanded GAM — Residual Diagnostics", fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+The residuals over time show clear patterns large positive residuals during winter months indicate the model systematically underpredicts in winter, while the residuals vs fitted plot shows a fan shape confirming **heteroscedasticity**: variance increases with fitted values. The ACF plot reveals strong autocorrelation at lags 1–24, meaning consecutive hourly errors are not independent. The residual distribution is right-skewed with a heavy positive tail, indicating the model more often underpredicts large generation values.
+
+**Refinement:** The main issue is overfitting from the tensor product while missing short-term variability. The refinement removes the tensor product, uses separate cyclic smooths for hour and day-of-year, and adds `avg_direct_radiation` (r=0.78 from EDA) with more knots to better capture its nonlinear shape.
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+X_train_gam3 = train[["hour", "day_of_year", "avg_shortwave_radiation",
+                        "avg_cloud_cover", "avg_temperature_2m",
+                        "avg_direct_radiation"]].values
+X_test_gam3  = test[["hour", "day_of_year", "avg_shortwave_radiation",
+                       "avg_cloud_cover", "avg_temperature_2m",
+                       "avg_direct_radiation"]].values
+
+y_train_gam3 = train["solar_mwh"].values
+y_test_gam3  = test["solar_mwh"].values
+
+gam3 = LinearGAM(
+    s(0, n_splines=24, spline_order=3, basis='cp') +
+    s(1, n_splines=20, spline_order=3, basis='cp') +
+    s(2, n_splines=25, spline_order=3) +
+    s(3, n_splines=15, spline_order=3) +
+    s(4, n_splines=15, spline_order=3) +
+    s(5, n_splines=25, spline_order=3)
+).fit(X_train_gam3, y_train_gam3)
+
+pred_gam3 = np.clip(gam3.predict(X_test_gam3), 0, None)
+rmse_gam3 = np.sqrt(mean_squared_error(y_test_gam3, pred_gam3))
+print(f"Expanded GAM RMSE : 551.25 MWh")
+print(f"Refined GAM RMSE  : {rmse_gam3:.2f} MWh")
+```
 
 ### Summary Table
 
 Present a summary table comparing **all models** you have fitted. Which model
 performs best on the test set, and why? (2–3 sentences.)
 
-| Model | Test RMSE |
-|:------|:---------:|
-| *[Baseline 1]* | |
-| *[Baseline 2]* | |
-| Initial GAM | |
-| Expanded GAM | |
-| *[Refinement(s)]* | |
+| Model | Test RMSE (MWh) |
+|:------|----------------:|
+| Baseline 1: Month-Hour Mean | 576.62 |
+| Baseline 2: Linear Regression | 647.18 |
+| Initial GAM (hour + day_of_year) | 524.56 |
+| Expanded GAM (+ weather + tensor product) | 551.25 |
+| Refined GAM (+ direct radiation, no tensor) | 528.09 |
 
-> *[Your interpretation here]*
+The **Initial GAM** performs best on the test set with an RMSE of 524.56 MWh, followed closely by the Refined GAM at 528.09 MWh. The Expanded GAM underperformed despite adding weather variables, likely because the tensor product interaction introduced overfitting on the training data. The Refined GAM recovers most of the loss by removing the tensor product and adding direct radiation as a separate smooth term, confirming that the choice of basis and interaction structure matters more than simply adding more predictors.
 
 ---
 
