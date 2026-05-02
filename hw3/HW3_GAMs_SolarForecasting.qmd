@@ -1,0 +1,400 @@
+---
+title: "IE 48B — Homework 3"
+subtitle: "Generalized Additive Models: Solar Power Forecasting"
+author: "**Yunus Emre Camızcı** | Student ID: **2021402078**"
+date: "Due: May 4, 2026, 23:59"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    self-contained: true
+    fig-width: 9
+    fig-height: 4
+    fig-dpi: 150
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+---
+
+::: {.callout-important}
+## Data Collection
+
+You are responsible for downloading and preparing the data yourself. See the
+problem statement PDF for details on sources and suggested locations.
+
+- **Target:** Hourly solar generation (MW) from [EPIAS Transparency Platform](https://seffaflik.epias.com.tr/electricity/electricity-generation/ex-post-generation/real-time-generation)
+- **Predictors:** Hourly weather data from [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api)
+- **Time span:** January 2022 – March 2026
+:::
+
+> **Reproducibility requirement:** Set your random seed to your full student ID
+> in every code block that uses randomisation. Results that cannot be reproduced
+> with the stated ID receive zero credit for the affected question.
+
+> **Submission:** Push a GitHub repository containing this rendered HTML file
+> and all source code. Repository structure must follow the course template.
+
+::: {.callout-tip}
+## Work incrementally — commit after each part
+
+After completing each part, render the document and push your progress:
+
+```bash
+quarto render HW3_GAMs_SolarForecasting.qmd
+git add HW3_GAMs_SolarForecasting.qmd \
+        HW3_GAMs_SolarForecasting.html
+git commit -m "Complete Part 3: GAM modeling"
+git push
+```
+
+**Your commit history is assessed.** A submission with a single final commit
+suggests the work was produced in one session and receives a deduction.
+Aim for at least one commit per part.
+:::
+
+---
+
+# Part 1 — Data Collection and Exploratory Analysis (20 pts)
+
+## Data Collection and Preparation (8 pts)
+
+Download the solar generation data from EPIAS and the weather data from
+Open-Meteo. Merge them into a single hourly data frame and create useful
+derived columns.
+
+Describe your data collection process: which variables did you download, from
+which locations, and how did you handle merging, missing values, and timezone
+alignment? Report the final dimensions of your dataset. (3–5 sentences.)
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import seaborn as sns
+from matplotlib.patches import Patch
+
+STUDENT_ID = 2021402078
+np.random.seed(STUDENT_ID % 2**31)
+
+sns.set_theme(style="whitegrid", palette="muted", font_scale=1.1)
+plt.rcParams.update({"figure.dpi": 120, "axes.spines.top": False, "axes.spines.right": False})
+
+SEASON_COLORS = {"Winter": "#4878CF", "Spring": "#6ACC65", "Summer": "#D65F5F", "Autumn": "#B47CC7"}
+
+def get_season(month):
+    if month in [12, 1, 2]:  return "Winter"
+    elif month in [3, 4, 5]: return "Spring"
+    elif month in [6, 7, 8]: return "Summer"
+    else:                     return "Autumn"
+
+df = pd.read_csv("data/solar_dataset.csv", parse_dates=["datetime"])
+if df["datetime"].dt.tz is None:
+    df["datetime"] = df["datetime"].dt.tz_localize("Europe/Istanbul")
+
+df["date"]        = pd.to_datetime(df["datetime"].dt.date)
+df["year"]        = df["datetime"].dt.year
+df["month"]       = df["datetime"].dt.month
+df["hour"]        = df["datetime"].dt.hour
+df["day_of_year"] = df["datetime"].dt.dayofyear
+df["season"]      = df["month"].map(get_season)
+
+print(f"Dataset shape  : {df.shape[0]:,} rows x {df.shape[1]} columns")
+print(f"Date range     : {df['datetime'].min()} -> {df['datetime'].max()}")
+print(f"Missing values : {df.isnull().sum().sum()}")
+```
+
+Hourly solar generation data were downloaded from the EPİAŞ Transparency Platform using the `eptr2` Python package (`ren-rt-gen` call), covering January 2022 through March 2026 in 51 monthly API requests. Weather data were obtained from the Open-Meteo Historical Weather API for three locations representing Turkey's main solar capacity regions: Konya (37.87°N, 32.48°E), Gaziantep (37.07°N, 37.38°E), and İzmir (38.42°N, 27.14°E), with variables including shortwave radiation, direct radiation, cloud cover, temperature, precipitation, and wind speed. Both sources report in Turkey Standard Time (UTC+3), so no timezone shift was required before merging on the hourly datetime index. No missing values were found after the inner join. The final dataset contains **14,040 rows and 34 columns**, including the target variable `solar_mwh`, 18 location-specific weather columns, 6 location-averaged aggregates, and calendar features (hour, month, day-of-year, season, weekday).
+
+## Exploratory Analysis (12 pts)
+
+Produce at least two visualisations that reveal the main patterns in solar
+generation: one showing the long-run behaviour (trend, annual seasonality) and
+one showing the within-day pattern and how it varies across seasons. Describe
+what you observe. (3–5 sentences total.)
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+daily = (df.groupby("date")["solar_mwh"].sum().reset_index().rename(columns={"solar_mwh": "daily_mwh"}))
+
+monthly = (df.groupby(["year", "month"])["solar_mwh"].sum().reset_index().rename(columns={"solar_mwh": "monthly_mwh"}))
+monthly["date"] = pd.to_datetime(monthly["year"].astype(str) + "-" + monthly["month"].astype(str).str.zfill(2) + "-01")
+
+fig, axes = plt.subplots(2, 1, figsize=(13, 8))
+
+ax = axes[0]
+ax.fill_between(daily["date"], daily["daily_mwh"], alpha=0.3, color="#D65F5F")
+rolling = daily.set_index("date")["daily_mwh"].rolling(30, center=True).mean()
+ax.plot(rolling.index, rolling.values, color="#8B0000", lw=2, label="30-day rolling mean")
+ax.set_ylabel("Solar generation (MWh)")
+ax.set_title("Daily Solar Generation — Turkey (EPİAŞ)", fontweight="bold")
+ax.legend(frameon=False)
+ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha="right")
+
+ax2 = axes[1]
+colors = [SEASON_COLORS[get_season(m)] for m in monthly["month"]]
+ax2.bar(monthly["date"], monthly["monthly_mwh"] / 1000, width=25, color=colors, alpha=0.85, edgecolor="white")
+ax2.set_ylabel("Monthly generation (GWh)")
+ax2.set_title("Monthly Solar Generation by Season", fontweight="bold")
+ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+plt.setp(ax2.xaxis.get_majorticklabels(), rotation=30, ha="right")
+legend_els = [Patch(facecolor=v, label=k) for k, v in SEASON_COLORS.items()]
+ax2.legend(handles=legend_els, frameon=False, ncol=4)
+
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+hourly_season = df.groupby(["season", "hour"])["solar_mwh"].agg(["mean", "std"]).reset_index()
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+ax = axes[0]
+for seas in ["Winter", "Spring", "Summer", "Autumn"]:
+    grp = hourly_season[hourly_season["season"] == seas]
+    ax.plot(grp["hour"], grp["mean"], label=seas, color=SEASON_COLORS[seas], lw=2.5)
+    ax.fill_between(grp["hour"], grp["mean"] - grp["std"], grp["mean"] + grp["std"], alpha=0.12, color=SEASON_COLORS[seas])
+ax.set_xlabel("Hour of day")
+ax.set_ylabel("Mean solar generation (MWh)")
+ax.set_title("Mean Hourly Profile by Season", fontweight="bold")
+ax.set_xticks(range(0, 24, 2))
+ax.legend(frameon=False)
+
+ax2 = axes[1]
+pivot = df.groupby(["month", "hour"])["solar_mwh"].mean().unstack("hour")
+sns.heatmap(pivot, cmap="YlOrRd", ax=ax2, cbar_kws={"label": "Mean MWh"}, linewidths=0.3, linecolor="white")
+ax2.set_xlabel("Hour of day")
+ax2.set_ylabel("Month")
+ax2.set_yticklabels(["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"], rotation=0)
+ax2.set_title("Mean Generation: Month x Hour Heatmap", fontweight="bold")
+
+plt.tight_layout()
+plt.show()
+```
+
+The data show a strong and regular **annual seasonal cycle**: generation peaks in June–July when days are long and solar elevation is high, and drops sharply in December–January. The 30-day rolling mean confirms there is no meaningful upward or downward trend over the 2022–2026 period. Generation follows a clear **bell-shaped diurnal curve** in every season, peaking around solar noon (12:00–13:00 local time) and dropping to zero at night. Summer produces the highest peaks with the widest active window (roughly 05:00–20:00), while winter peaks are lower and confined to 09:00–15:00. The month-by-hour heatmap makes this interaction especially clear, directly motivating an **interaction between hour and day-of-year** as a smooth term in the GAM.
+
+Explore the relationship between the weather variables and solar generation.
+Use appropriate visualisations. Which weather variable(s) are the strongest
+predictors? Are the relationships linear or nonlinear? (3–5 sentences.)
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+df_day = df[df["hour"].between(6, 19)].copy()
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+weather_vars = [
+    ("avg_shortwave_radiation", "Avg. Shortwave Radiation (W/m²)"),
+    ("avg_cloud_cover",         "Avg. Cloud Cover (%)"),
+    ("avg_temperature_2m",      "Avg. Temperature (°C)"),
+]
+
+for ax, (var, label) in zip(axes, weather_vars):
+    hb   = ax.hexbin(df_day[var], df_day["solar_mwh"], gridsize=40, cmap="YlOrRd", mincnt=1)
+    corr = df_day[[var, "solar_mwh"]].corr().iloc[0, 1]
+    plt.colorbar(hb, ax=ax, label="Count")
+    ax.set_xlabel(label)
+    ax.set_ylabel("Solar generation (MWh)")
+    ax.set_title(f"r = {corr:.2f}", fontweight="bold")
+
+plt.suptitle("Weather Variables vs. Solar Generation (daylight hours only)", y=1.02, fontweight="bold")
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+weather_cols = [c for c in df.columns if any(
+    v in c for v in ["radiation", "cloud", "temperature", "precipitation", "wind_speed"])]
+
+corr_series = (df[weather_cols + ["solar_mwh"]]
+               .corr()["solar_mwh"]
+               .drop("solar_mwh")
+               .sort_values())
+
+fig, ax = plt.subplots(figsize=(9, max(4, len(corr_series) * 0.35)))
+colors = ["#D65F5F" if v > 0 else "#4878CF" for v in corr_series]
+corr_series.plot(kind="barh", ax=ax, color=colors, edgecolor="white")
+ax.axvline(0, color="black", lw=0.8)
+ax.set_xlabel("Pearson correlation with solar_mwh")
+ax.set_title("Feature Correlations with Solar Generation", fontweight="bold")
+plt.tight_layout()
+plt.show()
+
+print("Top 5 positive correlations:")
+print(corr_series.tail(5).round(3).to_string())
+print("\nTop 5 negative correlations:")
+print(corr_series.head(5).round(3).to_string())
+```
+
+**Shortwave radiation** (GHI) is by far the strongest predictor of solar generation, with Pearson correlation well above 0.8 during daylight hours the relationship is positive but notably nonlinear, with increasing spread at high radiation values caused by cloud intermittency. **Cloud cover** is the strongest negative predictor (r ≈ −0.55), confirming that overcast conditions substantially suppress generation. **Direct radiation** behaves similarly to shortwave radiation and is also strongly positive. **Temperature** shows a weaker positive correlation that is largely driven by summer co-occurrence rather than a direct physical effect. The nonlinear shapes in the scatter plots motivate using **smooth terms** for radiation and cloud cover in the GAM rather than entering them linearly.
+
+---
+
+# Part 2 — Baseline Models (15 pts)
+
+## Train/Test Split (3 pts)
+
+Split the data chronologically:
+
+- **Training set:** All data before January 1, 2026
+- **Test set:** January 1 – March 31, 2026
+
+| Set | Number of hourly observations |
+|:---:|:---:|
+| Training | |
+| Test | |
+
+## Naive and Linear Baselines (12 pts)
+
+Fit at least two baseline models that do **not** use smooth terms. Report the
+test RMSE for each baseline. Explain what each baseline captures and what it
+misses. What motivates moving to a GAM? (3–4 sentences.)
+
+| Model | Test RMSE |
+|:------|:---------:|
+| *[Baseline 1]* | |
+| *[Baseline 2]* | |
+
+> *[Your interpretation here]*
+
+---
+
+# Part 3 — GAM Modeling (30 pts)
+
+## Initial GAM (10 pts)
+
+Start with a GAM that uses calendar variables as smooth terms. Report the model
+specification (which terms, basis types, $k$). Report the test RMSE. Plot the
+partial dependence plots. Do the estimated shapes align with the patterns from
+your EDA? (2–3 sentences.)
+
+| Model | Test RMSE |
+|:------|:---------:|
+| Initial GAM | |
+
+> *[Model specification, partial dependence plots, and interpretation here]*
+
+## Expanded GAM (10 pts)
+
+Extend your initial GAM by incorporating weather covariates and/or other
+features you consider relevant. You decide which variables to add, how many
+smooth terms to use, and whether interactions are appropriate.
+
+Report the model specification and test RMSE. Show the partial dependence plots
+for the new terms. How much did the additional terms improve the model?
+(2–3 sentences.)
+
+| Model | Test RMSE |
+|:------|:---------:|
+| Expanded GAM | |
+
+> *[Model specification, partial dependence plots, and interpretation here]*
+
+## Diagnostics and Refinement (10 pts)
+
+Diagnose your expanded GAM using residual analysis. Examine the residuals for
+patterns over time, autocorrelation (ACF), and heteroscedasticity.
+
+Present your diagnostic plots and describe what they reveal. Based on your
+findings, propose and implement **at least one refinement** to the model.
+Report the test RMSE before and after refinement.
+
+> *[Diagnostic plots, description, and refinement here]*
+
+### Summary Table
+
+Present a summary table comparing **all models** you have fitted. Which model
+performs best on the test set, and why? (2–3 sentences.)
+
+| Model | Test RMSE |
+|:------|:---------:|
+| *[Baseline 1]* | |
+| *[Baseline 2]* | |
+| Initial GAM | |
+| Expanded GAM | |
+| *[Refinement(s)]* | |
+
+> *[Your interpretation here]*
+
+---
+
+# Part 4 — Forecast Evaluation (25 pts)
+
+Using your best model from Part 3:
+
+## Daily Performance (13 pts)
+
+Compute the RMSE for each day in the test set separately. Plot the daily RMSE
+as a time series. Identify the days where the model performs worst and
+investigate why. (3–4 sentences.)
+
+> *[Daily RMSE plot and investigation here]*
+
+Compare the predicted and actual **daily total** generation across the test
+period. Is the model better at predicting daily totals than individual hours?
+Why might this be the case? (2–3 sentences.)
+
+> *[Comparison and interpretation here]*
+
+## Detailed Day Analysis (12 pts)
+
+Select one day where the model performs well and one where it performs poorly.
+For each day, plot the actual and predicted hourly generation side by side.
+What distinguishes the model's performance on these two days? (2–3 sentences.)
+
+> *[Good/bad day plots and interpretation here]*
+
+Are there systematic differences in model accuracy across the three months in
+the test set? Report the monthly RMSE and relate any differences to the
+characteristics of solar generation in those months. (2–3 sentences.)
+
+| Month | Test RMSE |
+|:-----:|:---------:|
+| January | |
+| February | |
+| March | |
+
+> *[Your interpretation here]*
+
+---
+
+# Decision Log (10 pts) {.unnumbered}
+
+Write **300–400 words** addressing the three prompts below. Graded on
+**specificity and honesty** — reference specific numbers, plots, and models
+from your analysis.
+
+1. **Model building narrative:** Describe the progression from your baseline to
+   your best model. At each step, what specific diagnostic or result motivated
+   the next change? Reference at least two specific RMSE values.
+
+2. **One surprising finding:** Something about the relationship between weather
+   and solar generation, or about the GAM's behaviour, that you did not expect.
+   Reference a specific plot or number.
+
+3. **Limitations:** What are the main limitations of your best model? What
+   additional data or model features would you add if you had more time? Be
+   specific — name the variable or technique and explain how it would address
+   a weakness you observed.
+
+> *[Your decision log here]*
