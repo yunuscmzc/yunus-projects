@@ -34,6 +34,13 @@ Compares three neural architectures for solar generation forecasting: a standard
 
 ---
 
+### [Live Next-Day Solar Forecasting](./SolarForecasting_LiveCompetition/)
+A real-time forecasting pipeline for a live competition: pulls fresh weather forecasts from the Open-Meteo API for 5 Turkish solar plants, engineers cyclical and interaction features, fits an OLS regression, and predicts the next 24 hours of solar production. Submitted and scored daily against actual measurements.
+
+**Tools:** Python, R, statsmodels, pandas, Open-Meteo API
+
+---
+
 ### [MINIROCKET Replication](./MINIROCKET_Replicate_Result/)
 From-scratch replication of the MINIROCKET paper (Dempster et al., KDD 2021) — a fast, near-deterministic transform for time series classification. Evaluated on 10 UCR datasets; mean accuracy matched or exceeded the paper's reported results (+0.009 mean improvement).
 
@@ -43,7 +50,7 @@ From-scratch replication of the MINIROCKET paper (Dempster et al., KDD 2021) —
 
 ## Tech Stack
 
-- **Languages:** Python
+- **Languages:** Python, R
 - **Notebooks:** Quarto (`.qmd` → rendered `.html`)
-- **ML / Stats:** PyTorch, scikit-learn, pygam, tslearn, SciPy
+- **ML / Stats:** PyTorch, scikit-learn, statsmodels, pygam, tslearn, SciPy
 - **Data:** UCR Time Series Archive, Open-Meteo API, EPIAS (Turkish electricity market)
