@@ -55,9 +55,17 @@ Predicts the gender of e-commerce users from their browsing and shopping behavio
 
 ---
 
+### [Real-Time Soccer Event Prediction (SPC)](./RealTimeSoccerEventPrediction_SPC/)
+An online, minute-by-minute Statistical Process Control system that predicts upcoming goals and red cards in soccer matches before they happen. Uses a custom EWMA–CUSUM hybrid control chart on engineered match signals, with strict no-leakage constraints and an arm/cooldown policy to suppress false alarms.
+
+**Tools:** Python, NumPy, pandas
+
+---
+
 ## Tech Stack
 
 - **Languages:** Python, R
 - **Notebooks:** Quarto (`.qmd` → rendered `.html`)
 - **ML / Stats:** PyTorch, XGBoost, scikit-learn, statsmodels, Optuna, pygam, tslearn, SciPy
+- **Methods:** Statistical Process Control (EWMA, CUSUM), GAMs, neural additive models, time series classification
 - **Data:** UCR Time Series Archive, Open-Meteo API, EPIAS (Turkish electricity market)
