@@ -1,6 +1,6 @@
 # Yunus Emre Camızcı — Data Science Projects
 
-A collection of machine learning and time series projects covering forecasting, classification, predictive modeling, and paper replication.
+A collection of my projects spanning machine learning, time series analysis, statistical process control, predictive modeling, and game development.
 
 ---
 
@@ -62,10 +62,20 @@ An online, minute-by-minute Statistical Process Control system that predicts upc
 
 ---
 
+## Game Development
+
+### [Light Dweller](./Light_Dweller/)
+A top-down dungeon-crawler / wave-survival game built from scratch in Python with Pygame. Features an object-oriented architecture (a `Character` base class extending into hero, enemies, and a boss), enemy AI, tile-based levels loaded from CSV, a coin-driven upgrade shop, animated sprites, fade transitions, music, and sound effects.
+
+**Tools:** Python, Pygame
+
+---
+
 ## Tech Stack
 
 - **Languages:** Python, R
 - **Notebooks:** Quarto (`.qmd` → rendered `.html`)
 - **ML / Stats:** PyTorch, XGBoost, scikit-learn, statsmodels, Optuna, pygam, tslearn, SciPy
+- **Other:** Pygame (game development)
 - **Methods:** Statistical Process Control (EWMA, CUSUM), GAMs, neural additive models, time series classification
 - **Data:** UCR Time Series Archive, Open-Meteo API, EPIAS (Turkish electricity market)
