@@ -1,6 +1,6 @@
 # Yunus Emre Camızcı — Data Science Projects
 
-A collection of time series analysis and machine learning projects covering forecasting, classification, and paper replication.
+A collection of machine learning and time series projects covering forecasting, classification, predictive modeling, and paper replication.
 
 ---
 
@@ -48,9 +48,16 @@ From-scratch replication of the MINIROCKET paper (Dempster et al., KDD 2021) —
 
 ---
 
+### [E-commerce User Gender Prediction](./GenderPrediction_Ecommerce/)
+Predicts the gender of e-commerce users from their browsing and shopping behavior. Combines extensive behavioral feature engineering (action scoring, brand-gender profiling, Turkish product-name keyword detection, category diversity) with an Optuna-tuned XGBoost classifier, reaching ~0.89 AUC. *(Two-person collaboration.)*
+
+**Tools:** Python, XGBoost, Optuna, scikit-learn, pandas
+
+---
+
 ## Tech Stack
 
 - **Languages:** Python, R
 - **Notebooks:** Quarto (`.qmd` → rendered `.html`)
-- **ML / Stats:** PyTorch, scikit-learn, statsmodels, pygam, tslearn, SciPy
+- **ML / Stats:** PyTorch, XGBoost, scikit-learn, statsmodels, Optuna, pygam, tslearn, SciPy
 - **Data:** UCR Time Series Archive, Open-Meteo API, EPIAS (Turkish electricity market)
