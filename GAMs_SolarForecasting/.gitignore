@@ -1,0 +1,5 @@
+﻿.env
+.eptr2-tgt
+.cache_openmeteo/
+.cache_openmeteo.sqlite
+.vscode/

@@ -1,0 +1,739 @@
+---
+title: "IE 48B — Homework 3"
+subtitle: "Generalized Additive Models: Solar Power Forecasting"
+author: "**Yunus Emre Camızcı** | Student ID: **2021402078**"
+date: "Due: May 4, 2026, 23:59"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    self-contained: true
+    fig-width: 9
+    fig-height: 4
+    fig-dpi: 150
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+---
+
+::: {.callout-important}
+## Data Collection
+
+You are responsible for downloading and preparing the data yourself. See the
+problem statement PDF for details on sources and suggested locations.
+
+- **Target:** Hourly solar generation (MW) from [EPIAS Transparency Platform](https://seffaflik.epias.com.tr/electricity/electricity-generation/ex-post-generation/real-time-generation)
+- **Predictors:** Hourly weather data from [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api)
+- **Time span:** January 2022 – March 2026
+:::
+
+> **Reproducibility requirement:** Set your random seed to your full student ID
+> in every code block that uses randomisation. Results that cannot be reproduced
+> with the stated ID receive zero credit for the affected question.
+
+> **Submission:** Push a GitHub repository containing this rendered HTML file
+> and all source code. Repository structure must follow the course template.
+
+::: {.callout-tip}
+## Work incrementally — commit after each part
+
+After completing each part, render the document and push your progress:
+
+```bash
+quarto render HW3_GAMs_SolarForecasting.qmd
+git add HW3_GAMs_SolarForecasting.qmd \
+        HW3_GAMs_SolarForecasting.html
+git commit -m "Complete Part 3: GAM modeling"
+git push
+```
+
+**Your commit history is assessed.** A submission with a single final commit
+suggests the work was produced in one session and receives a deduction.
+Aim for at least one commit per part.
+:::
+
+---
+
+# Part 1 — Data Collection and Exploratory Analysis (20 pts)
+
+## Data Collection and Preparation (8 pts)
+
+Download the solar generation data from EPIAS and the weather data from
+Open-Meteo. Merge them into a single hourly data frame and create useful
+derived columns.
+
+Describe your data collection process: which variables did you download, from
+which locations, and how did you handle merging, missing values, and timezone
+alignment? Report the final dimensions of your dataset. (3–5 sentences.)
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import seaborn as sns
+from matplotlib.patches import Patch
+
+STUDENT_ID = 2021402078
+np.random.seed(STUDENT_ID % 2**31)
+
+sns.set_theme(style="whitegrid", palette="muted", font_scale=1.1)
+plt.rcParams.update({"figure.dpi": 120, "axes.spines.top": False, "axes.spines.right": False})
+
+SEASON_COLORS = {"Winter": "#4878CF", "Spring": "#6ACC65", "Summer": "#D65F5F", "Autumn": "#B47CC7"}
+
+def get_season(month):
+    if month in [12, 1, 2]:  return "Winter"
+    elif month in [3, 4, 5]: return "Spring"
+    elif month in [6, 7, 8]: return "Summer"
+    else:                     return "Autumn"
+
+df = pd.read_csv("data/solar_dataset.csv", parse_dates=["datetime"])
+if df["datetime"].dt.tz is None:
+    df["datetime"] = df["datetime"].dt.tz_localize("Europe/Istanbul")
+
+df["date"]        = pd.to_datetime(df["datetime"].dt.date)
+df["year"]        = df["datetime"].dt.year
+df["month"]       = df["datetime"].dt.month
+df["hour"]        = df["datetime"].dt.hour
+df["day_of_year"] = df["datetime"].dt.dayofyear
+df["season"]      = df["month"].map(get_season)
+
+print(f"Dataset shape  : {df.shape[0]:,} rows x {df.shape[1]} columns")
+print(f"Date range     : {df['datetime'].min()} -> {df['datetime'].max()}")
+print(f"Missing values : {df.isnull().sum().sum()}")
+```
+
+Hourly solar generation data were downloaded from the EPİAŞ Transparency Platform using the `eptr2` Python package (`rt-gen` call), covering January 2022 through March 2026 in 51 monthly API requests. Weather data were obtained from the Open-Meteo Historical Weather API for three locations representing Turkey's main solar capacity regions: Konya (37.87°N, 32.48°E), Gaziantep (37.07°N, 37.38°E), and İzmir (38.42°N, 27.14°E), with variables including shortwave radiation, direct radiation, cloud cover, temperature, precipitation, and wind speed. Both sources report in Turkey Standard Time (UTC+3), so no timezone shift was required before merging on the hourly datetime index. No missing values were found after the inner join. The final dataset contains 37,224 rows and 35 columns, including the target variable `solar_mwh`, 18 location-specific weather columns, 6 location-averaged aggregates, and calendar features (hour, month, day-of-year, season, weekday).
+
+## Exploratory Analysis (12 pts)
+
+Produce at least two visualisations that reveal the main patterns in solar
+generation: one showing the long-run behaviour (trend, annual seasonality) and
+one showing the within-day pattern and how it varies across seasons. Describe
+what you observe. (3–5 sentences total.)
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+daily = (df.groupby("date")["solar_mwh"].sum().reset_index().rename(columns={"solar_mwh": "daily_mwh"}))
+
+monthly = (df.groupby(["year", "month"])["solar_mwh"].sum().reset_index().rename(columns={"solar_mwh": "monthly_mwh"}))
+monthly["date"] = pd.to_datetime(monthly["year"].astype(str) + "-" + monthly["month"].astype(str).str.zfill(2) + "-01")
+
+fig, axes = plt.subplots(2, 1, figsize=(13, 8))
+
+ax = axes[0]
+ax.fill_between(daily["date"], daily["daily_mwh"], alpha=0.3, color="#D65F5F")
+rolling = daily.set_index("date")["daily_mwh"].rolling(30, center=True).mean()
+ax.plot(rolling.index, rolling.values, color="#8B0000", lw=2, label="30-day rolling mean")
+ax.set_ylabel("Solar generation (MWh)")
+ax.set_title("Daily Solar Generation — Turkey (EPİAŞ)", fontweight="bold")
+ax.legend(frameon=False)
+ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha="right")
+
+ax2 = axes[1]
+colors = [SEASON_COLORS[get_season(m)] for m in monthly["month"]]
+ax2.bar(monthly["date"], monthly["monthly_mwh"] / 1000, width=25, color=colors, alpha=0.85, edgecolor="white")
+ax2.set_ylabel("Monthly generation (GWh)")
+ax2.set_title("Monthly Solar Generation by Season", fontweight="bold")
+ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+plt.setp(ax2.xaxis.get_majorticklabels(), rotation=30, ha="right")
+legend_els = [Patch(facecolor=v, label=k) for k, v in SEASON_COLORS.items()]
+ax2.legend(handles=legend_els, frameon=False, ncol=4)
+
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+hourly_season = df.groupby(["season", "hour"])["solar_mwh"].agg(["mean", "std"]).reset_index()
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+ax = axes[0]
+for seas in ["Winter", "Spring", "Summer", "Autumn"]:
+    grp = hourly_season[hourly_season["season"] == seas]
+    ax.plot(grp["hour"], grp["mean"], label=seas, color=SEASON_COLORS[seas], lw=2.5)
+    ax.fill_between(grp["hour"], grp["mean"] - grp["std"], grp["mean"] + grp["std"], alpha=0.12, color=SEASON_COLORS[seas])
+ax.set_xlabel("Hour of day")
+ax.set_ylabel("Mean solar generation (MWh)")
+ax.set_title("Mean Hourly Profile by Season", fontweight="bold")
+ax.set_xticks(range(0, 24, 2))
+ax.legend(frameon=False)
+
+ax2 = axes[1]
+pivot = df.groupby(["month", "hour"])["solar_mwh"].mean().unstack("hour")
+sns.heatmap(pivot, cmap="YlOrRd", ax=ax2, cbar_kws={"label": "Mean MWh"}, linewidths=0.3, linecolor="white")
+ax2.set_xlabel("Hour of day")
+ax2.set_ylabel("Month")
+ax2.set_yticklabels(["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"], rotation=0)
+ax2.set_title("Mean Generation: Month x Hour Heatmap", fontweight="bold")
+
+plt.tight_layout()
+plt.show()
+```
+
+The data show a strong and regular **annual seasonal cycle**: generation peaks in June–July when days are long and solar elevation is high, and drops sharply in December–January. The 30-day rolling mean confirms there is no meaningful upward or downward trend over the 2022–2026 period. Generation follows a clear **bell-shaped diurnal curve** in every season, peaking around solar noon (12:00–13:00 local time) and dropping to zero at night. Summer produces the highest peaks with the widest active window (roughly 05:00–20:00), while winter peaks are lower and confined to 09:00–15:00. The month-by-hour heatmap makes this interaction especially clear, directly motivating an **interaction between hour and day-of-year** as a smooth term in the GAM.
+
+Explore the relationship between the weather variables and solar generation.
+Use appropriate visualisations. Which weather variable(s) are the strongest
+predictors? Are the relationships linear or nonlinear? (3–5 sentences.)
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+df_day = df[df["hour"].between(6, 19)].copy()
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+weather_vars = [
+    ("avg_shortwave_radiation", "Avg. Shortwave Radiation (W/m²)"),
+    ("avg_cloud_cover",         "Avg. Cloud Cover (%)"),
+    ("avg_temperature_2m",      "Avg. Temperature (°C)"),
+]
+
+for ax, (var, label) in zip(axes, weather_vars):
+    hb   = ax.hexbin(df_day[var], df_day["solar_mwh"], gridsize=40, cmap="YlOrRd", mincnt=1)
+    corr = df_day[[var, "solar_mwh"]].corr().iloc[0, 1]
+    plt.colorbar(hb, ax=ax, label="Count")
+    ax.set_xlabel(label)
+    ax.set_ylabel("Solar generation (MWh)")
+    ax.set_title(f"r = {corr:.2f}", fontweight="bold")
+
+plt.suptitle("Weather Variables vs. Solar Generation (daylight hours only)", y=1.02, fontweight="bold")
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+weather_cols = [c for c in df.columns if any(
+    v in c for v in ["radiation", "cloud", "temperature", "precipitation", "wind_speed"])]
+
+corr_series = (df[weather_cols + ["solar_mwh"]]
+               .corr()["solar_mwh"]
+               .drop("solar_mwh")
+               .sort_values())
+
+fig, ax = plt.subplots(figsize=(9, max(4, len(corr_series) * 0.35)))
+colors = ["#D65F5F" if v > 0 else "#4878CF" for v in corr_series]
+corr_series.plot(kind="barh", ax=ax, color=colors, edgecolor="white")
+ax.axvline(0, color="black", lw=0.8)
+ax.set_xlabel("Pearson correlation with solar_mwh")
+ax.set_title("Feature Correlations with Solar Generation", fontweight="bold")
+plt.tight_layout()
+plt.show()
+
+print("Top 5 positive correlations:")
+print(corr_series.tail(5).round(3).to_string())
+print("\nTop 5 negative correlations:")
+print(corr_series.head(5).round(3).to_string())
+```
+
+**Shortwave radiation** (GHI) is by far the strongest predictor of solar generation, with Pearson correlation well above 0.8 during daylight hours the relationship is positive but notably nonlinear, with increasing spread at high radiation values caused by cloud intermittency. **Cloud cover** is the strongest negative predictor (r ≈ −0.13), confirming that overcast conditions substantially suppress generation. **Direct radiation** behaves similarly to shortwave radiation and is also strongly positive. **Temperature** shows a weaker positive correlation that is largely driven by summer co-occurrence rather than a direct physical effect. The nonlinear shapes in the scatter plots motivate using **smooth terms** for radiation and cloud cover in the GAM rather than entering them linearly.
+
+---
+
+# Part 2 — Baseline Models (15 pts)
+
+## Train/Test Split (3 pts)
+
+Split the data chronologically:
+
+- **Training set:** All data before January 1, 2026
+- **Test set:** January 1 – March 31, 2026
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+df["datetime_naive"] = df["datetime"].dt.tz_localize(None)
+
+train = df[df["datetime_naive"] < pd.Timestamp("2026-01-01")].copy()
+test  = df[(df["datetime_naive"] >= pd.Timestamp("2026-01-01")) & 
+           (df["datetime_naive"] <= pd.Timestamp("2026-03-31 23:00:00"))].copy()
+
+print(f"Training set: {len(train):,} observations ({train['datetime'].min().date()} to {train['datetime'].max().date()})")
+print(f"Test set    : {len(test):,} observations ({test['datetime'].min().date()} to {test['datetime'].max().date()})")
+```
+
+| Set | Number of hourly observations |
+|:---:|:---:|
+| Training | 35,064 |
+| Test | 2,160 |
+
+## Naive and Linear Baselines (12 pts)
+
+Fit at least two baseline models that do **not** use smooth terms. Report the
+test RMSE for each baseline. Explain what each baseline captures and what it
+misses. What motivates moving to a GAM? (3–4 sentences.)
+
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+import numpy as np
+
+def rmse(y_true, y_pred):
+    return np.sqrt(mean_squared_error(y_true, y_pred))
+
+# ── Baseline 1: Mean generation per month-hour combination ────────────────────
+month_hour_means = (train.groupby(["month", "hour"])["solar_mwh"]
+                        .mean()
+                        .reset_index()
+                        .rename(columns={"solar_mwh": "pred_b1"}))
+
+test_b1 = test.merge(month_hour_means, on=["month", "hour"], how="left")
+rmse_b1 = rmse(test_b1["solar_mwh"], test_b1["pred_b1"])
+print(f"Baseline 1 (Month-Hour Mean) Test RMSE: {rmse_b1:.2f} MWh")
+
+# ── Baseline 2: Linear regression with calendar + weather features ─────────────
+features = ["hour", "month", "day_of_year",
+            "avg_shortwave_radiation", "avg_cloud_cover", "avg_temperature_2m"]
+
+X_train = train[features].fillna(0)
+X_test  = test[features].fillna(0)
+y_train = train["solar_mwh"]
+y_test  = test["solar_mwh"]
+
+lr = LinearRegression()
+lr.fit(X_train, y_train)
+pred_b2 = lr.predict(X_test)
+rmse_b2 = rmse(y_test, pred_b2)
+print(f"Baseline 2 (Linear Regression)  Test RMSE: {rmse_b2:.2f} MWh")
+```
+
+| Model | Test RMSE |
+|:------|----------:|
+| Baseline 1: Month-Hour Mean | 576.62 |
+| Baseline 2: Linear Regression | 647.18 |
+
+Baseline 1 (month-hour mean) captures the average diurnal and seasonal cycle but completely ignores day-to-day weather variability on a cloudy summer day it will still predict the typical sunny summer value. Baseline 2 (linear regression with calendar and weather variables) improves on this by incorporating radiation and cloud cover, but forces all relationships to be strictly linear for example, it cannot capture the fact that solar generation is exactly zero at night regardless of temperature. Both baselines miss the nonlinear interaction between hour of day and time of year, where the same hour produces very different generation in June versus December. This motivates a GAM, which can fit smooth, nonlinear functions for each predictor and model the hour × day-of-year interaction directly.
+
+---
+
+# Part 3 — GAM Modeling (30 pts)
+
+## Initial GAM (10 pts)
+
+Start with a GAM that uses calendar variables as smooth terms. Report the model
+specification (which terms, basis types, $k$). Report the test RMSE. Plot the
+partial dependence plots. Do the estimated shapes align with the patterns from
+your EDA? (2–3 sentences.)
+
+| Model | Test RMSE |
+|:------|----------:|
+| Initial GAM | 524.56 |
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+from pygam import LinearGAM, s, te
+from sklearn.metrics import mean_squared_error
+
+# Features for initial GAM — calendar only
+# s(hour, basis='cp') = cyclic cubic spline (periodic, wraps at 24)
+# s(day_of_year, basis='cp') = cyclic cubic spline (periodic, wraps at 365)
+# te(hour, day_of_year) = tensor product interaction
+
+X_train_gam1 = train[["hour", "day_of_year"]].values
+X_test_gam1  = test[["hour", "day_of_year"]].values
+y_train_gam1 = train["solar_mwh"].values
+y_test_gam1  = test["solar_mwh"].values
+
+gam1 = LinearGAM(
+    s(0, n_splines=24, spline_order=3, basis='cp') +  # hour (cyclic, k=24)
+    s(1, n_splines=20, spline_order=3, basis='cp')    # day_of_year (cyclic, k=20)
+).fit(X_train_gam1, y_train_gam1)
+
+pred_gam1 = gam1.predict(X_test_gam1)
+pred_gam1 = np.clip(pred_gam1, 0, None)
+rmse_gam1 = np.sqrt(mean_squared_error(y_test_gam1, pred_gam1))
+print(f"Initial GAM Test RMSE: {rmse_gam1:.2f} MWh")
+
+# Partial dependence plots
+fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+titles = ["Hour of Day (cyclic, k=24)", "Day of Year (cyclic, k=20)"]
+
+for i, (ax, title) in enumerate(zip(axes, titles)):
+    XX = gam1.generate_X_grid(term=i)
+    ax.plot(XX[:, i], gam1.partial_dependence(term=i, X=XX), color="#D65F5F", lw=2.5)
+    ax.fill_between(XX[:, i],
+                    *gam1.partial_dependence(term=i, X=XX, width=0.95)[1].T,
+                    alpha=0.2, color="#D65F5F")
+    ax.set_title(title, fontweight="bold")
+    ax.set_xlabel(["Hour", "Day of Year"][i])
+    ax.set_ylabel("Partial effect (MWh)")
+    ax.axhline(0, color="black", lw=0.8, ls="--")
+
+plt.suptitle("Initial GAM — Partial Dependence Plots", fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+The initial GAM uses two cyclic cubic spline smooth terms: `s(hour, k=24)` capturing the diurnal generation cycle, and `s(day_of_year, k=20)` capturing the annual seasonality both specified as cyclic bases since these variables wrap around. The partial dependence plot for hour shows a clean bell-shaped peak around midday, perfectly consistent with the diurnal patterns observed in EDA. The day-of-year smooth captures the summer peak and winter trough, also matching the annual seasonality plot from Part 1. However, this model cannot capture the interaction between hour and season the same smooth hour effect is applied regardless of time of year which motivates adding a tensor product term in the expanded GAM.
+
+## Expanded GAM (10 pts)
+
+Extend your initial GAM by incorporating weather covariates and/or other
+features you consider relevant. You decide which variables to add, how many
+smooth terms to use, and whether interactions are appropriate.
+
+Report the model specification and test RMSE. Show the partial dependence plots
+for the new terms. How much did the additional terms improve the model?
+(2–3 sentences.)
+
+| Model | Test RMSE |
+|:------|----------:|
+| Expanded GAM | 551.25 |
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# Expanded GAM: calendar + weather covariates + tensor product interaction
+# te(hour, day_of_year) captures the hour x season interaction from EDA
+# s(avg_shortwave_radiation) — strongest predictor (r=0.79)
+# s(avg_cloud_cover) — strongest negative predictor
+# s(avg_temperature_2m) — secondary predictor
+
+X_train_gam2 = train[["hour", "day_of_year", "avg_shortwave_radiation",
+                        "avg_cloud_cover", "avg_temperature_2m"]].values
+X_test_gam2  = test[["hour", "day_of_year", "avg_shortwave_radiation",
+                       "avg_cloud_cover", "avg_temperature_2m"]].values
+y_train_gam2 = train["solar_mwh"].values
+y_test_gam2  = test["solar_mwh"].values
+
+gam2 = LinearGAM(
+    te(0, 1, n_splines=[24, 20], spline_order=3) +  # tensor: hour x day_of_year
+    s(2, n_splines=20, spline_order=3) +              # avg_shortwave_radiation
+    s(3, n_splines=15, spline_order=3) +              # avg_cloud_cover
+    s(4, n_splines=15, spline_order=3)                # avg_temperature_2m
+).fit(X_train_gam2, y_train_gam2)
+
+pred_gam2 = gam2.predict(X_test_gam2)
+pred_gam2 = np.clip(pred_gam2, 0, None)
+rmse_gam2 = np.sqrt(mean_squared_error(y_test_gam2, pred_gam2))
+print(f"Expanded GAM Test RMSE: {rmse_gam2:.2f} MWh")
+
+# Partial dependence plots for the new weather terms (terms 1, 2, 3)
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+term_info = [
+    (1, 2, "Avg. Shortwave Radiation (W/m²)"),
+    (2, 3, "Avg. Cloud Cover (%)"),
+    (3, 4, "Avg. Temperature (°C)"),
+]
+
+for ax, (term_idx, col_idx, xlabel) in zip(axes, term_info):
+    XX = gam2.generate_X_grid(term=term_idx)
+    ax.plot(XX[:, col_idx], gam2.partial_dependence(term=term_idx, X=XX),
+            color="#4878CF", lw=2.5)
+    ax.fill_between(XX[:, col_idx],
+                    *gam2.partial_dependence(term=term_idx, X=XX, width=0.95)[1].T,
+                    alpha=0.2, color="#4878CF")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Partial effect (MWh)")
+    ax.axhline(0, color="black", lw=0.8, ls="--")
+
+axes[0].set_title("s(shortwave_radiation, k=20)", fontweight="bold")
+axes[1].set_title("s(cloud_cover, k=15)", fontweight="bold")
+axes[2].set_title("s(temperature_2m, k=15)", fontweight="bold")
+
+plt.suptitle("Expanded GAM — Weather Term Partial Dependence Plots",
+             fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+The expanded GAM adds a tensor product interaction `te(hour, day_of_year, k=[24,20])` to capture the hour-by-season interaction identified in EDA, plus smooth terms for the three strongest weather predictors: shortwave radiation, cloud cover, and temperature. The shortwave radiation partial dependence shows a strongly nonlinear positive relationship that steepens sharply at high radiation values, confirming a linear term would have been inadequate. The cloud cover smooth shows that generation is highest under clear skies (0% cloud) and decreases nonlinearly as coverage increases. Temperature shows a negative effect at cold temperatures crossing zero around 10°C and rising steeply above 30°C, reflecting summer co-occurrence rather than a direct physical effect. Despite adding weather terms, the expanded GAM RMSE of 551.25 MWh is slightly worse than the initial GAM (524.56 MWh), suggesting the tensor product interaction may be causing overfitting or that the weather terms are not adding clean signal beyond what the calendar terms already capture this will be investigated in the diagnostics step.
+
+## Diagnostics and Refinement (10 pts)
+
+Diagnose your expanded GAM using residual analysis. Examine the residuals for
+patterns over time, autocorrelation (ACF), and heteroscedasticity.
+
+Present your diagnostic plots and describe what they reveal. Based on your
+findings, propose and implement **at least one refinement** to the model.
+Report the test RMSE before and after refinement.
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# ── Residuals from expanded GAM ────────────────────────────────────────────────
+residuals = y_test_gam2 - pred_gam2
+test_copy = test.copy().reset_index(drop=True)
+test_copy["residual"] = residuals
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+# Panel 1: Residuals over time
+ax = axes[0, 0]
+ax.plot(test_copy["datetime"], test_copy["residual"], alpha=0.5, lw=0.8, color="#4878CF")
+ax.axhline(0, color="black", lw=1, ls="--")
+ax.set_xlabel("Date")
+ax.set_ylabel("Residual (MWh)")
+ax.set_title("Residuals Over Time", fontweight="bold")
+
+# Panel 2: Residuals vs fitted
+ax2 = axes[0, 1]
+ax2.scatter(pred_gam2, residuals, alpha=0.3, s=5, color="#D65F5F")
+ax2.axhline(0, color="black", lw=1, ls="--")
+ax2.set_xlabel("Fitted values (MWh)")
+ax2.set_ylabel("Residual (MWh)")
+ax2.set_title("Residuals vs Fitted (Heteroscedasticity Check)", fontweight="bold")
+
+# Panel 3: ACF
+from statsmodels.graphics.tsaplots import plot_acf
+plot_acf(residuals, lags=48, ax=axes[1, 0], color="#4878CF")
+axes[1, 0].set_title("ACF of Residuals (48 lags)", fontweight="bold")
+axes[1, 0].set_xlabel("Lag (hours)")
+
+# Panel 4: Residual histogram
+ax4 = axes[1, 1]
+ax4.hist(residuals, bins=60, color="#6ACC65", edgecolor="white", alpha=0.85)
+ax4.axvline(0, color="black", lw=1, ls="--")
+ax4.set_xlabel("Residual (MWh)")
+ax4.set_ylabel("Count")
+ax4.set_title("Residual Distribution", fontweight="bold")
+
+plt.suptitle("Expanded GAM — Residual Diagnostics", fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+The residuals over time show clear patterns large positive residuals during winter months indicate the model systematically underpredicts in winter, while the residuals vs fitted plot shows a fan shape confirming heteroscedasticity: variance increases with fitted values. The ACF plot reveals strong autocorrelation at lags 1–24, meaning consecutive hourly errors are not independent. The residual distribution is right-skewed with a heavy positive tail, indicating the model more often underpredicts large generation values.
+
+**Refinement:** The main issue is overfitting from the tensor product while missing short-term variability. The refinement removes the tensor product, uses separate cyclic smooths for hour and day-of-year, and adds `avg_direct_radiation` (r=0.78 from EDA) with more knots to better capture its nonlinear shape.
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+X_train_gam3 = train[["hour", "day_of_year", "avg_shortwave_radiation",
+                        "avg_cloud_cover", "avg_temperature_2m",
+                        "avg_direct_radiation"]].values
+X_test_gam3  = test[["hour", "day_of_year", "avg_shortwave_radiation",
+                       "avg_cloud_cover", "avg_temperature_2m",
+                       "avg_direct_radiation"]].values
+
+y_train_gam3 = train["solar_mwh"].values
+y_test_gam3  = test["solar_mwh"].values
+
+gam3 = LinearGAM(
+    s(0, n_splines=24, spline_order=3, basis='cp') +
+    s(1, n_splines=20, spline_order=3, basis='cp') +
+    s(2, n_splines=25, spline_order=3) +
+    s(3, n_splines=15, spline_order=3) +
+    s(4, n_splines=15, spline_order=3) +
+    s(5, n_splines=25, spline_order=3)
+).fit(X_train_gam3, y_train_gam3)
+
+pred_gam3 = np.clip(gam3.predict(X_test_gam3), 0, None)
+rmse_gam3 = np.sqrt(mean_squared_error(y_test_gam3, pred_gam3))
+print(f"Expanded GAM RMSE : 551.25 MWh")
+print(f"Refined GAM RMSE  : {rmse_gam3:.2f} MWh")
+```
+
+### Summary Table
+
+Present a summary table comparing **all models** you have fitted. Which model
+performs best on the test set, and why? (2–3 sentences.)
+
+| Model | Test RMSE (MWh) |
+|:------|----------------:|
+| Baseline 1: Month-Hour Mean | 576.62 |
+| Baseline 2: Linear Regression | 647.18 |
+| Initial GAM (hour + day_of_year) | 524.56 |
+| Expanded GAM (+ weather + tensor product) | 551.25 |
+| Refined GAM (+ direct radiation, no tensor) | 528.09 |
+
+The Initial GAM performs best on the test set with an RMSE of 524.56 MWh, followed closely by the Refined GAM at 528.09 MWh. The Expanded GAM underperformed despite adding weather variables, likely because the tensor product interaction introduced overfitting on the training data. The Refined GAM recovers most of the loss by removing the tensor product and adding direct radiation as a separate smooth term, confirming that the choice of basis and interaction structure matters more than simply adding more predictors.
+
+---
+
+# Part 4 — Forecast Evaluation (25 pts)
+
+Using your best model from Part 3:
+
+## Daily Performance (13 pts)
+
+Compute the RMSE for each day in the test set separately. Plot the daily RMSE
+as a time series. Identify the days where the model performs worst and
+investigate why. (3–4 sentences.)
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# Best model is Initial GAM (RMSE 524.56)
+# Use pred_gam1 and y_test_gam1 from Part 3
+test_copy2 = test.copy().reset_index(drop=True)
+test_copy2["pred"] = pred_gam1
+test_copy2["actual"] = y_test_gam1
+
+# Daily RMSE
+daily_rmse = (test_copy2.groupby("date")
+              .apply(lambda x: np.sqrt(mean_squared_error(x["actual"], x["pred"])))
+              .reset_index()
+              .rename(columns={0: "daily_rmse"}))
+daily_rmse["date"] = pd.to_datetime(daily_rmse["date"])
+
+fig, ax = plt.subplots(figsize=(13, 5))
+ax.plot(daily_rmse["date"], daily_rmse["daily_rmse"], color="#4878CF", lw=1.5)
+ax.fill_between(daily_rmse["date"], daily_rmse["daily_rmse"], alpha=0.2, color="#4878CF")
+ax.axhline(daily_rmse["daily_rmse"].mean(), color="#D65F5F", lw=1.5, ls="--", label=f"Mean RMSE: {daily_rmse['daily_rmse'].mean():.1f} MWh")
+ax.set_xlabel("Date")
+ax.set_ylabel("Daily RMSE (MWh)")
+ax.set_title("Daily RMSE — Initial GAM (Test Set: Jan–Mar 2026)", fontweight="bold")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+
+# Worst days
+worst_days = daily_rmse.nlargest(5, "daily_rmse")
+print("5 worst days:")
+print(worst_days.to_string(index=False))
+```
+
+The daily RMSE plot shows errors increase substantially through the test period, with March 2026 having the worst performance (peak RMSE exceeding 1,250 MWh) compared to January which is more stable. This pattern reflects increasing solar generation in spring as actual generation grows, the calendar-only model's fixed seasonal smooth underpredicts on clear days and overpredicts on cloudy ones. The worst days correspond to high-variability weather transitions that the model cannot capture without weather inputs.
+
+Compare the predicted and actual **daily total** generation across the test
+period. Is the model better at predicting daily totals than individual hours?
+Why might this be the case? (2–3 sentences.)
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# Daily totals: actual vs predicted
+daily_totals = test_copy2.groupby("date").agg(
+    actual_total=("actual", "sum"),
+    pred_total=("pred", "sum")
+).reset_index()
+daily_totals["date"] = pd.to_datetime(daily_totals["date"])
+
+daily_total_rmse = np.sqrt(mean_squared_error(daily_totals["actual_total"], daily_totals["pred_total"]))
+print(f"Hourly RMSE : 524.56 MWh")
+print(f"Daily total RMSE: {daily_total_rmse:.2f} MWh")
+
+fig, ax = plt.subplots(figsize=(13, 5))
+ax.plot(daily_totals["date"], daily_totals["actual_total"], label="Actual", color="#D65F5F", lw=2)
+ax.plot(daily_totals["date"], daily_totals["pred_total"], label="Predicted", color="#4878CF", lw=2, ls="--")
+ax.set_xlabel("Date")
+ax.set_ylabel("Daily total generation (MWh)")
+ax.set_title("Actual vs Predicted Daily Total Generation", fontweight="bold")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+The daily total plot reveals a critical weakness the predicted daily totals form an almost flat smooth curve while actual totals vary dramatically day-to-day (from ~5,000 to ~31,000 MWh). The model is not better at predicting daily totals in this case because the systematic underprediction on high-generation days and overprediction on low-generation days do not cancel out. The daily total RMSE reflects this structural bias. This confirms that weather variables are essential the calendar-only GAM captures only the average seasonal shape, not day-to-day variability driven by cloud cover and radiation.
+
+## Detailed Day Analysis (12 pts)
+
+Select one day where the model performs well and one where it performs poorly.
+For each day, plot the actual and predicted hourly generation side by side.
+What distinguishes the model's performance on these two days? (2–3 sentences.)
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+# Best and worst days from daily_rmse
+best_day  = daily_rmse.nsmallest(1, "daily_rmse")["date"].values[0]
+worst_day = daily_rmse.nlargest(1, "daily_rmse")["date"].values[0]
+
+print(f"Best day : {best_day} (RMSE: {daily_rmse[daily_rmse['date']==best_day]['daily_rmse'].values[0]:.1f} MWh)")
+print(f"Worst day: {worst_day} (RMSE: {daily_rmse[daily_rmse['date']==worst_day]['daily_rmse'].values[0]:.1f} MWh)")
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+for ax, day, label, color in zip(
+    axes,
+    [best_day, worst_day],
+    ["Best Day", "Worst Day"],
+    ["#6ACC65", "#D65F5F"]
+):
+    day_data = test_copy2[pd.to_datetime(test_copy2["date"]) == pd.Timestamp(day)]
+    ax.plot(day_data["hour"], day_data["actual"], label="Actual", color="black", lw=2)
+    ax.plot(day_data["hour"], day_data["pred"],   label="Predicted", color=color, lw=2, ls="--")
+    ax.set_xlabel("Hour of day")
+    ax.set_ylabel("Solar generation (MWh)")
+    ax.set_title(f"{label}: {pd.Timestamp(day).strftime('%Y-%m-%d')}", fontweight="bold")
+    ax.set_xticks(range(0, 24, 2))
+    ax.legend(frameon=False)
+
+plt.suptitle("Actual vs Predicted — Best and Worst Days", fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+On the best day (2026-03-22) the model closely tracks the diurnal shape, slightly underpredicting the peak by around 150 MWh the smooth bell-shaped actual curve aligns well with what a calendar-based smooth expects for late March. On the worst day (2026-03-11) the model massively underpredicts actual generation peaked at ~3,600 MWh while the model predicted only ~1,450 MWh. This was an exceptionally sunny day that generated far more than the average March day the calendar smooth represents. This confirms the fundamental limitation of a calendar-only GAM: it predicts the climatological average for each hour and day-of-year, but cannot respond to day-specific weather conditions like unusually high irradiance.
+
+Are there systematic differences in model accuracy across the three months in
+the test set? Report the monthly RMSE and relate any differences to the
+characteristics of solar generation in those months. (2–3 sentences.)
+
+| Month | Test RMSE |
+|:-----:|----------------:|
+| January | 358.808783 |
+| February | 455.117171 |
+| March | 695.006790 |
+
+```{python}
+np.random.seed(STUDENT_ID % 2**31)
+
+monthly_rmse = (test_copy2.groupby("month")
+                .apply(lambda x: np.sqrt(mean_squared_error(x["actual"], x["pred"])))
+                .reset_index()
+                .rename(columns={0: "rmse"}))
+monthly_rmse["month_name"] = monthly_rmse["month"].map({1:"January", 2:"February", 3:"March"})
+print(monthly_rmse[["month_name","rmse"]].to_string(index=False))
+```
+
+January has the lowest RMSE at 358.81 MWh because winter generation is low and stable the calendar smooth captures the average well when day-to-day variability is limited. February increases to 455.12 MWh as days lengthen and generation becomes more variable. March has by far the worst RMSE at 695.01 MWh because spring brings rapidly increasing generation with high day-to-day variability driven by changing weather as confirmed by the worst day analysis (2026-03-11) where actual generation reached 3,600 MWh against a prediction of only 1,450 MWh. This progression directly motivates incorporating weather variables into future model iterations.
+
+---
+
+# Decision Log (10 pts) {.unnumbered}
+
+Write **300–400 words** addressing the three prompts below. Graded on
+**specificity and honesty** — reference specific numbers, plots, and models
+from your analysis.
+
+1. **Model building narrative:** Describe the progression from your baseline to
+   your best model. At each step, what specific diagnostic or result motivated
+   the next change? Reference at least two specific RMSE values.
+
+2. **One surprising finding:** Something about the relationship between weather
+   and solar generation, or about the GAM's behaviour, that you did not expect.
+   Reference a specific plot or number.
+
+3. **Limitations:** What are the main limitations of your best model? What
+   additional data or model features would you add if you had more time? Be
+   specific — name the variable or technique and explain how it would address
+   a weakness you observed.
+
+**1. Model building narrative**
+
+The progression from baseline to best model was driven by specific diagnostic results at each step. The month-hour mean baseline (RMSE: 576.62 MWh) established that calendar structure alone captures meaningful signal predicting the average generation for each hour-month combination already beats a naive overall mean. Moving to linear regression (RMSE: 647.18 MWh) was actually worse, revealing that forcing linear relationships on inherently nonlinear predictors like shortwave radiation actively harms performance. This motivated the Initial GAM with cyclic cubic splines for hour (k=24) and day-of-year (k=20), which achieved the best test RMSE of 524.56 MWh. The partial dependence plots confirmed the smooth terms captured the expected bell-shaped diurnal curve and summer peak seasonal pattern from EDA. The Expanded GAM added weather covariates and a tensor product interaction, but RMSE worsened to 551.25 MWh the diagnostic plots showed the tensor product was overfitting. The Refined GAM removed the tensor product and added direct radiation as a separate smooth term, recovering to 528.09 MWh but still not beating the Initial GAM, suggesting the weather terms add noise rather than signal when the tensor product is absent.
+
+**2. One surprising finding**
+
+The most unexpected result was that adding weather variables shortwave radiation, cloud cover, and temperature made the model worse rather than better (RMSE increased from 524.56 to 551.25 MWh). The correlation analysis in Part 1 showed shortwave radiation had r=0.81 with solar generation, the strongest predictor in the dataset, so an improvement seemed certain. The partial dependence plot for shortwave radiation showed a sensible nonlinear positive shape, yet the overall fit deteriorated. Investigating further, the daily total generation plot revealed the calendar-only model already captures the seasonal mean well, and the weather terms introduce additional variance without reducing the systematic bias. This suggests the three-location average weather may be too noisy a proxy for actual generation conditions across all of Turkey.
+
+**3. Limitations**
+
+The best model's main limitation is that it predicts the climatological average for each hour and day-of-year combination rather than responding to actual weather conditions as shown starkly by the worst day analysis where actual generation on 2026-03-11 reached 3,600 MWh while the model predicted only 1,450 MWh. The strong autocorrelation in residuals at lags 1-24 (visible in the ACF plot) indicates the model misses short-term persistence in weather states. To address this, I would add lagged radiation observations as predictors specifically `shortwave_radiation` from the previous 1-3 hours which would allow the model to condition on current weather state rather than only calendar position. Additionally, replacing the three-location weather average with a capacity-weighted spatial average across actual solar plant locations in Turkey would reduce the noise introduced by geographically mismatched weather stations.

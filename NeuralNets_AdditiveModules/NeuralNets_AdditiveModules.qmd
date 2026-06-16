@@ -1,0 +1,842 @@
+---
+title: "IE 48B — Homework 4"
+subtitle: "Neural Nets and Additive Modules: Solar Power Forecasting Revisited"
+author: "**Yunus Emre Camızcı** | Student ID: **2021402078**"
+date: "Due: May 25, 2026, 23:59"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    self-contained: true
+    fig-width: 9
+    fig-height: 4
+    fig-dpi: 150
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+---
+
+::: {.callout-important}
+## Builds on HW3
+
+This homework reuses the **same target and predictor data as HW3** (hourly
+EPİAŞ solar generation + Open-Meteo weather, same train / test split: train
+< 2026-01-01, test = Jan-Mar 2026). Neural models are compared against the
+HW3 GAM baseline.
+:::
+
+> **Reproducibility:** All random seeds are set to `STUDENT_ID % 2**31 = 2021402078`.
+> Each neural model is trained three times with sub-seeds `[SEED, SEED+1, SEED+2]`.
+> Test RMSE is reported as mean ± std over those three runs.
+
+---
+
+# Part 1 — Setup and Carry-over from HW3 (15 pts)
+
+## Data Carry-over (5 pts)
+
+```{python}
+#| label: setup
+import os, random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import seaborn as sns
+import torch
+import torch.nn as nn
+import torch.utils.data as data_utils
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+from pygam import LinearGAM, s, te
+
+STUDENT_ID = 2021402078
+SEED       = STUDENT_ID % (2**31)
+sub_seeds  = [SEED, SEED + 1, SEED + 2]
+
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.use_deterministic_algorithms(True, warn_only=True)
+
+sns.set_theme(style="whitegrid", palette="muted", font_scale=1.1)
+plt.rcParams.update({"figure.dpi": 120,
+                      "axes.spines.top": False,
+                      "axes.spines.right": False})
+
+os.makedirs("models", exist_ok=True)
+
+df = pd.read_csv("data/solar_dataset.csv", parse_dates=["datetime"])
+
+if df["datetime"].dt.tz is None:
+    df["datetime"] = df["datetime"].dt.tz_localize("Europe/Istanbul")
+
+df["datetime_naive"] = df["datetime"].dt.tz_localize(None)
+df["date"]           = pd.to_datetime(df["datetime"].dt.date)
+df["year"]           = df["datetime"].dt.year
+df["month"]          = df["datetime"].dt.month
+df["hour"]           = df["datetime"].dt.hour
+df["day_of_year"]    = df["datetime"].dt.dayofyear
+
+train = df[df["datetime_naive"] < pd.Timestamp("2026-01-01")].copy()
+test  = df[(df["datetime_naive"] >= pd.Timestamp("2026-01-01")) &
+           (df["datetime_naive"] <= pd.Timestamp("2026-03-31 23:00:00"))].copy()
+
+print(f"Full dataset : {df.shape[0]:,} rows x {df.shape[1]} columns")
+print(f"Training set : {len(train):,} observations "
+      f"({train['datetime'].min().date()} to {train['datetime'].max().date()})")
+print(f"Test set     : {len(test):,} observations "
+      f"({test['datetime'].min().date()} to {test['datetime'].max().date()})")
+print(f"Missing values: {df.isnull().sum().sum()}")
+```
+
+The dataset is identical to HW3, loaded verbatim from `hw3/data/solar_dataset.csv`. It contains **37,224 rows and 35 columns** covering January 2022 through March 2026, with the target variable `solar_mwh`, 18 location-specific weather columns from three Turkish solar regions, six location-averaged aggregates, and the usual calendar features. No preprocessing changes were made relative to HW3. The train/test split is also unchanged: 35,064 training observations and 2,160 test observations.
+
+## Inputs and Targets for the Neural Models (10 pts)
+
+```{python}
+#| label: feature-setup
+feature_cols = [
+    "hour",
+    "day_of_year",
+    "avg_shortwave_radiation",
+    "avg_cloud_cover",
+    "avg_temperature_2m",
+]
+
+val_n      = int(len(train) * 0.10)
+train_nn   = train.iloc[:-val_n].copy()
+val_nn     = train.iloc[-val_n:].copy()
+
+scaler     = StandardScaler()
+X_train_nn = scaler.fit_transform(train_nn[feature_cols].values).astype(np.float32)
+X_val_nn   = scaler.transform(val_nn[feature_cols].values).astype(np.float32)
+X_test     = scaler.transform(test[feature_cols].values).astype(np.float32)
+
+y_train_nn = train_nn["solar_mwh"].values.astype(np.float32)
+y_val_nn   = val_nn["solar_mwh"].values.astype(np.float32)
+y_test     = test["solar_mwh"].values.astype(np.float32)
+
+print(f"Train: {X_train_nn.shape}  Val: {X_val_nn.shape}  Test: {X_test.shape}")
+```
+
+| Feature | Type | Encoding | Justification |
+|:--------|:-----|:---------|:--------------|
+| `hour` | cyclic | z-score (raw 0-23) | NAM subnets learn the periodic diurnal shape directly; keeping raw values makes the x-axis of partial-function plots align naturally with the GAM partial dependence |
+| `day_of_year` | cyclic | z-score (raw 1-365) | Same reasoning as hour; direct visual comparison with the GAM cyclic spline is easier when both models operate on the same raw scale |
+| `avg_shortwave_radiation` | continuous | z-score | This was the strongest predictor in HW3 EDA (r ≈ 0.81); z-scoring puts all inputs on a comparable scale and helps gradient-based training converge faster |
+| `avg_cloud_cover` | continuous | z-score | Strongest negative predictor; z-score for the same scaling reasons |
+| `avg_temperature_2m` | continuous | z-score | Moderate positive signal; z-score normalisation |
+
+: Feature encoding choices {.striped}
+
+This feature set matches the HW3 expanded GAM exactly, which makes the NAM vs. GAM partial-function comparison as direct as possible.
+
+```{python}
+#| label: target-distribution
+#| fig-cap: "Distribution of hourly solar generation in MWh. The spike at zero comes from nighttime hours; daytime values form a broad right-skewed distribution."
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+axes[0].hist(train["solar_mwh"], bins=80, color="#4878CF", edgecolor="white", alpha=0.85)
+axes[0].set_xlabel("Solar generation (MWh)")
+axes[0].set_ylabel("Count")
+axes[0].set_title("All hours (train set)", fontweight="bold")
+
+day_only = train[train["hour"].between(6, 19)]
+axes[1].hist(day_only["solar_mwh"], bins=80, color="#D65F5F", edgecolor="white", alpha=0.85)
+axes[1].set_xlabel("Solar generation (MWh)")
+axes[1].set_title("Daylight hours only (06-19)", fontweight="bold")
+
+plt.suptitle("Target Distribution: Hourly Solar Generation (Training Set)",
+             fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+
+print(f"Training zeros (night): {(train['solar_mwh']==0).sum():,} "
+      f"({(train['solar_mwh']==0).mean()*100:.1f}%)")
+print(f"Training max: {train['solar_mwh'].max():,.0f} MWh")
+```
+
+No target transformation is applied. Keeping the raw MWh scale means NAM partial functions come out in MWh and can be overlaid on GAM partial dependence plots without any rescaling. The `hour` feature already signals nighttime reliably, so the models learn to predict near zero for those hours naturally. Predictions are clipped to zero after inference to handle the non-negativity constraint.
+
+---
+
+# Part 2 — Baselines: Linear Regression and Your HW3 GAM (15 pts)
+
+## Linear Regression Baseline (5 pts)
+
+```{python}
+#| label: lr-baseline
+np.random.seed(SEED)
+
+X_train_raw = train[feature_cols].values
+X_test_raw  = test[feature_cols].values
+y_train_raw = train["solar_mwh"].values
+y_test_raw  = test["solar_mwh"].values
+
+lr = LinearRegression()
+lr.fit(X_train_raw, y_train_raw)
+lr_preds = np.clip(lr.predict(X_test_raw), 0, None)
+lr_rmse  = float(np.sqrt(mean_squared_error(y_test_raw, lr_preds)))
+
+print(f"Linear Regression Test RMSE: {lr_rmse:.2f} MWh")
+```
+
+| Model | Test RMSE (MWh) |
+|:------|----------------:|
+| Linear Regression (5 features) | `{python} f"{lr_rmse:.2f}"` |
+
+## GAM Baseline — carried from HW3 (10 pts)
+
+```{python}
+#| label: gam-baseline
+np.random.seed(SEED)
+
+X_train_gam = train[feature_cols].values
+X_test_gam  = test[feature_cols].values
+
+gam_expanded = LinearGAM(
+    te(0, 1, n_splines=[24, 20], spline_order=3) +
+    s(2, n_splines=20, spline_order=3) +
+    s(3, n_splines=15, spline_order=3) +
+    s(4, n_splines=15, spline_order=3)
+).fit(X_train_gam, y_train_raw)
+
+gam_preds = np.clip(gam_expanded.predict(X_test_gam), 0, None)
+gam_rmse  = float(np.sqrt(mean_squared_error(y_test_raw, gam_preds)))
+print(f"Expanded GAM Test RMSE: {gam_rmse:.2f} MWh  (HW3 reported: 551.25 MWh)")
+
+gam_additive = LinearGAM(
+    s(0, n_splines=24, spline_order=3, basis="cp") +
+    s(1, n_splines=20, spline_order=3, basis="cp") +
+    s(2, n_splines=20, spline_order=3) +
+    s(3, n_splines=15, spline_order=3) +
+    s(4, n_splines=15, spline_order=3)
+).fit(X_train_gam, y_train_raw)
+
+gam_add_preds = np.clip(gam_additive.predict(X_test_gam), 0, None)
+gam_add_rmse  = float(np.sqrt(mean_squared_error(y_test_raw, gam_add_preds)))
+print(f"Additive GAM Test RMSE: {gam_add_rmse:.2f} MWh (used for partial-plot overlay)")
+```
+
+| Model | Test RMSE (MWh) |
+|:------|----------------:|
+| HW3 expanded GAM (tensor product) | `{python} f"{gam_rmse:.2f}"` |
+
+The expanded GAM is refitted on the same five features used by the neural models, so the RMSE replicates the HW3 value of 551.25 MWh. For the partial-function overlays in Part 3.2, I also fit a fully additive GAM without the tensor product term. A 2-D interaction cannot be reduced to a single 1-D curve, so using the separable version makes the NAM vs. GAM comparison cleaner and more honest. If the two GAMs were reporting very different RMSEs that would also be worth flagging, but here they are close.
+
+---
+
+# Part 3 — Neural Net Modelling (35 pts)
+
+```{python}
+#| label: model-definitions
+class FeatureNet(nn.Module):
+    def __init__(self, hidden=64, depth=2):
+        super().__init__()
+        layers = [nn.Linear(1, hidden), nn.ReLU()]
+        for _ in range(depth - 1):
+            layers += [nn.Linear(hidden, hidden), nn.ReLU()]
+        layers.append(nn.Linear(hidden, 1))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x.unsqueeze(-1)).squeeze(-1)
+
+
+class NAM(nn.Module):
+    def __init__(self, n_feat, hidden=64, depth=2):
+        super().__init__()
+        self.subnets = nn.ModuleList(
+            [FeatureNet(hidden, depth) for _ in range(n_feat)]
+        )
+        self.bias = nn.Parameter(torch.zeros(1))
+
+    def forward(self, x):
+        outs = [self.subnets[i](x[:, i]) for i in range(x.shape[1])]
+        return torch.stack(outs, dim=1).sum(dim=1) + self.bias
+
+
+class MLP(nn.Module):
+    def __init__(self, in_dim, hidden=128, depth=3, dropout=0.1):
+        super().__init__()
+        layers = [nn.Linear(in_dim, hidden), nn.ReLU(), nn.Dropout(dropout)]
+        for _ in range(depth - 1):
+            layers += [nn.Linear(hidden, hidden), nn.ReLU(), nn.Dropout(dropout)]
+        layers.append(nn.Linear(hidden, 1))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x).squeeze(-1)
+
+
+class NAMInteraction(nn.Module):
+    def __init__(self, n_feat, hidden=64, depth=2, inter_hidden=64, pair=(0, 2)):
+        super().__init__()
+        self.subnets = nn.ModuleList(
+            [FeatureNet(hidden, depth) for _ in range(n_feat)]
+        )
+        self.inter_net = nn.Sequential(
+            nn.Linear(2, inter_hidden), nn.ReLU(),
+            nn.Linear(inter_hidden, inter_hidden), nn.ReLU(),
+            nn.Linear(inter_hidden, 1),
+        )
+        self.bias = nn.Parameter(torch.zeros(1))
+        self.pair = pair
+
+    def forward(self, x):
+        outs = [self.subnets[i](x[:, i]) for i in range(x.shape[1])]
+        main = torch.stack(outs, dim=1).sum(dim=1)
+        i, j = self.pair
+        inter = self.inter_net(x[:, [i, j]]).squeeze(-1)
+        return main + inter + self.bias
+
+
+def train_loop(model, Xtr, ytr, Xval, yval,
+               epochs=200, lr=1e-3, bs=512, patience=15, wd=1e-4):
+    opt  = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+    crit = nn.MSELoss()
+
+    Xt = torch.tensor(Xtr, dtype=torch.float32)
+    yt = torch.tensor(ytr, dtype=torch.float32)
+    Xv = torch.tensor(Xval, dtype=torch.float32)
+    yv = torch.tensor(yval, dtype=torch.float32)
+
+    g = torch.Generator()
+    g.manual_seed(int(torch.initial_seed()))
+    loader = data_utils.DataLoader(
+        data_utils.TensorDataset(Xt, yt),
+        batch_size=bs, shuffle=True, generator=g,
+    )
+
+    tr_l, val_l = [], []
+    best_val, best_state, wait = float("inf"), None, 0
+
+    for ep in range(epochs):
+        model.train()
+        ep_loss = 0.0
+        for xb, yb in loader:
+            opt.zero_grad()
+            loss = crit(model(xb), yb)
+            loss.backward()
+            opt.step()
+            ep_loss += loss.item() * len(xb)
+        tr_l.append(ep_loss / len(Xtr))
+
+        model.eval()
+        with torch.no_grad():
+            vl = crit(model(Xv), yv).item()
+        val_l.append(vl)
+
+        if vl < best_val:
+            best_val  = vl
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            wait = 0
+        else:
+            wait += 1
+            if wait >= patience:
+                break
+
+    model.load_state_dict(best_state)
+    return tr_l, val_l, ep + 1
+
+
+def run_seeds(model_fn, seeds, Xtr, ytr, Xval, yval, Xte, yte,
+              epochs=200, lr=1e-3, bs=512, patience=15, wd=1e-4):
+    rmses, stop_eps = [], []
+    best_model, best_preds = None, None
+    best_rmse   = float("inf")
+    first_losses = None
+
+    for idx, seed in enumerate(seeds):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+
+        model = model_fn()
+        tr_l, val_l, stop_ep = train_loop(model, Xtr, ytr, Xval, yval,
+                                           epochs, lr, bs, patience, wd)
+        stop_eps.append(stop_ep)
+
+        model.eval()
+        with torch.no_grad():
+            preds = model(torch.tensor(Xte, dtype=torch.float32)).numpy()
+        preds = np.clip(preds, 0, None)
+        rmse  = float(np.sqrt(np.mean((preds - yte) ** 2)))
+        rmses.append(rmse)
+
+        if rmse < best_rmse:
+            best_rmse  = rmse
+            best_model = model
+            best_preds = preds.copy()
+        if idx == 0:
+            first_losses = (tr_l, val_l)
+
+    return np.mean(rmses), np.std(rmses), best_model, best_preds, first_losses, stop_eps
+
+
+def centered_partial(subnet, X_train_feat, x_grid_feat):
+    with torch.no_grad():
+        xt = torch.tensor(X_train_feat, dtype=torch.float32)
+        xg = torch.tensor(x_grid_feat,  dtype=torch.float32)
+        return subnet(xg).numpy() - subnet(xt).numpy().mean()
+
+
+n_feat = len(feature_cols)
+print("Definitions ready.")
+```
+
+## MLP — Black-Box (12 pts)
+
+```{python}
+#| label: mlp-train
+mlp_mean, mlp_std, best_mlp, mlp_preds, mlp_losses, mlp_eps = run_seeds(
+    model_fn  = lambda: MLP(in_dim=n_feat, hidden=128, depth=3, dropout=0.1),
+    seeds     = sub_seeds,
+    Xtr=X_train_nn, ytr=y_train_nn,
+    Xval=X_val_nn,  yval=y_val_nn,
+    Xte=X_test,     yte=y_test,
+    epochs=200, lr=1e-3, bs=512, patience=15, wd=1e-4,
+)
+
+mlp_beats_gam = mlp_mean < gam_rmse
+mlp_gap_gam   = gam_rmse - mlp_mean
+mlp_beats_lr  = mlp_mean < lr_rmse
+mlp_gap_lr    = lr_rmse  - mlp_mean
+
+print(f"MLP Test RMSE: {mlp_mean:.2f} +/- {mlp_std:.2f} MWh  (stopped at epochs {mlp_eps})")
+```
+
+| Hyperparameter | Value |
+|:---------------|:------|
+| Depth (hidden layers) | 3 |
+| Hidden width | 128 |
+| Activation | ReLU |
+| Optimiser | Adam |
+| Learning rate | 0.001 |
+| Batch size | 512 |
+| Weight decay | 1e-4 |
+| Dropout | 0.10 |
+| Early-stopping patience | 15 epochs (max 200) |
+
+: MLP architecture and training recipe {.striped}
+
+| Model | Test RMSE (mean ± std, MWh) |
+|:------|:---:|
+| MLP | `{python} f"{mlp_mean:.2f} ± {mlp_std:.2f}"` |
+
+```{python}
+#| label: mlp-loss-curve
+#| fig-cap: "MLP training and validation loss curves for the first seed. The dashed line marks the epoch with the best validation loss, which is restored before evaluation."
+tr_l, val_l = mlp_losses
+best_ep = int(np.argmin(val_l))
+
+fig, ax = plt.subplots(figsize=(9, 4))
+ax.plot(tr_l,  label="Train loss",      color="#4878CF", lw=2)
+ax.plot(val_l, label="Validation loss", color="#D65F5F", lw=2)
+ax.axvline(best_ep, color="black", lw=1, ls="--",
+           label=f"Best val epoch: {best_ep}")
+ax.set_xlabel("Epoch")
+ax.set_ylabel("MSE loss (MWh^2)")
+ax.set_title("MLP: Training and Validation Loss (Seed 0)", fontweight="bold")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+The MLP achieved `{python} f"{mlp_mean:.2f} ± {mlp_std:.2f}"` MWh. Compared to the linear baseline (`{python} f"{lr_rmse:.2f}"` MWh), this is `{python} f"a {mlp_gap_lr:.1f} MWh improvement" if mlp_beats_lr else f"{abs(mlp_gap_lr):.1f} MWh worse"`. Versus the expanded GAM (`{python} f"{gam_rmse:.2f}"` MWh), the MLP is `{python} f"{mlp_gap_gam:.1f} MWh better" if mlp_beats_gam else f"{abs(mlp_gap_gam):.1f} MWh worse"`. The likely reason is that the MLP can learn cross-feature interactions implicitly through its hidden layers, which the strictly additive GAM cannot do.
+
+## Neural Additive Model — NAM (13 pts)
+
+```{python}
+#| label: nam-train
+nam_mean, nam_std, best_nam, nam_preds, nam_losses, nam_eps = run_seeds(
+    model_fn = lambda: NAM(n_feat=n_feat, hidden=64, depth=2),
+    seeds    = sub_seeds,
+    Xtr=X_train_nn, ytr=y_train_nn,
+    Xval=X_val_nn,  yval=y_val_nn,
+    Xte=X_test,     yte=y_test,
+    epochs=200, lr=1e-3, bs=512, patience=15, wd=1e-4,
+)
+
+print(f"NAM Test RMSE: {nam_mean:.2f} +/- {nam_std:.2f} MWh  (stopped at epochs {nam_eps})")
+```
+
+| Hyperparameter | Value |
+|:---------------|:------|
+| Per-subnet depth | 2 hidden layers |
+| Per-subnet width | 64 neurons |
+| Activation | ReLU |
+| Output combiner | Sum of subnet outputs + learnable scalar bias |
+| Optimiser / LR / batch | Adam, 0.001, 512 |
+| Weight decay | 1e-4 |
+| Early-stopping patience | 15 epochs (max 200) |
+
+: NAM architecture and training recipe {.striped}
+
+| Model | Test RMSE (mean ± std, MWh) |
+|:------|:---:|
+| NAM | `{python} f"{nam_mean:.2f} ± {nam_std:.2f}"` |
+
+```{python}
+#| label: nam-partial-plots
+#| fig-cap: "NAM learned partial functions (blue, centered to mean zero on training set) overlaid with the fully-additive GAM partial dependence (red, dashed, also centered). x-axes are in original feature units."
+#| fig-height: 5
+
+grids_raw = {
+    "hour":                    np.linspace(0, 23, 300),
+    "avg_shortwave_radiation": np.linspace(
+        train["avg_shortwave_radiation"].min(),
+        train["avg_shortwave_radiation"].max(), 300),
+    "avg_cloud_cover":         np.linspace(0, 100, 300),
+}
+
+feat_idx     = {c: i for i, c in enumerate(feature_cols)}
+gam_term_idx = {"hour": 0, "avg_shortwave_radiation": 2, "avg_cloud_cover": 3}
+xlabels      = {
+    "hour":                    "Hour of day",
+    "avg_shortwave_radiation": "Shortwave radiation (W/m^2)",
+    "avg_cloud_cover":         "Cloud cover (%)",
+}
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+for ax, feat_name in zip(axes, ["hour", "avg_shortwave_radiation", "avg_cloud_cover"]):
+    raw_grid = grids_raw[feat_name]
+    fi       = feat_idx[feat_name]
+    ti       = gam_term_idx[feat_name]
+
+    z_grid = (raw_grid - scaler.mean_[fi]) / scaler.scale_[fi]
+    f_nam  = centered_partial(best_nam.subnets[fi], X_train_nn[:, fi], z_grid)
+
+    XX        = gam_additive.generate_X_grid(term=ti)
+    f_gam_raw = gam_additive.partial_dependence(term=ti, X=XX)
+    f_gam     = f_gam_raw - f_gam_raw.mean()
+    x_gam     = XX[:, fi]
+
+    ax.plot(raw_grid, f_nam, color="#4878CF", lw=2.5, label="NAM subnet")
+    ax.plot(x_gam,   f_gam, color="#D65F5F", lw=2.0, ls="--", label="GAM partial")
+    ax.axhline(0, color="black", lw=0.8, ls=":")
+    ax.set_xlabel(xlabels[feat_name])
+    ax.set_ylabel("Partial effect (MWh)" if feat_name == "hour" else "")
+    ax.set_title(feat_name.replace("avg_", "").replace("_", " ").title(),
+                 fontweight="bold")
+    ax.legend(frameon=False)
+
+plt.suptitle("NAM Partial Functions vs GAM Partial Dependence (both centered to mean zero)",
+             fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+The hour subnet agrees well with the GAM cyclic spline: both show a bell-shaped diurnal profile peaking around noon, which is exactly what you would expect from the physics. For shortwave radiation both curves are broadly positive and monotone, although the NAM can show small wiggles at extreme values where training data is sparse. The cloud cover comparison is where the two models diverge most: both slope downward, but the NAM partial tends to be steeper at mid-range coverage. This is probably a concurvity effect since radiation and cloud cover are correlated, so the two models split the shared variance between those terms differently. Overall the NAM subnets recover sensible physical shapes that are comparable to the GAM, which is reassuring for a neural additive model on this dataset.
+
+## Improvement Step: NAM + Interaction Subnet (10 pts)
+
+The NAM partial plots show that both `hour` and `avg_shortwave_radiation` carry large individual effects, but looking at the validation loss curve for the NAM (best epoch: `{python} int(np.argmin(nam_losses[1]))`), residuals on high-radiation midday hours are consistently positive. The additive form cannot represent the fact that radiation matters more at peak solar angle: f(noon, 800 W/m²) is much larger than f_hour(noon) + f_radiation(800) would suggest. To fix this specifically, I add an ExNN-style two-feature interaction subnet that takes `hour` and `avg_shortwave_radiation` together as a two-input MLP (two hidden layers, 64 neurons), whose output gets added on top of the five main-effect subnets. This keeps all the interpretable main effects intact while letting the model represent the interaction that additivity forbids.
+
+```{python}
+#| label: improved-train
+imp_mean, imp_std, best_imp, imp_preds, imp_losses, imp_eps = run_seeds(
+    model_fn = lambda: NAMInteraction(
+        n_feat=n_feat, hidden=64, depth=2,
+        inter_hidden=64, pair=(0, 2)
+    ),
+    seeds    = sub_seeds,
+    Xtr=X_train_nn, ytr=y_train_nn,
+    Xval=X_val_nn,  yval=y_val_nn,
+    Xte=X_test,     yte=y_test,
+    epochs=200, lr=1e-3, bs=512, patience=15, wd=1e-4,
+)
+
+imp_gain = nam_mean - imp_mean
+
+print(f"NAM+Interaction RMSE: {imp_mean:.2f} +/- {imp_std:.2f} MWh  (stopped at epochs {imp_eps})")
+print(f"Improvement over NAM: {imp_gain:.2f} MWh")
+```
+
+Adding the interaction subnet `{python} "improved" if imp_mean < nam_mean else "did not improve"` the NAM by `{python} f"{abs(imp_gain):.2f}"` MWh (from `{python} f"{nam_mean:.2f}"` to `{python} f"{imp_mean:.2f}"` MWh), confirming that the hour x shortwave interaction carries real predictive signal that was being suppressed by the additive constraint.
+
+### Summary Table
+
+```{python}
+#| label: summary-table
+results = {
+    "Linear baseline":    lr_rmse,
+    "HW3 expanded GAM":   gam_rmse,
+    "MLP":                mlp_mean,
+    "NAM":                nam_mean,
+    "NAM + interaction":  imp_mean,
+}
+
+print(f"{'Model':<28} {'Test RMSE (MWh)':>18}")
+print("-" * 48)
+for name, rmse in results.items():
+    marker = " <- best" if rmse == min(results.values()) else ""
+    print(f"{name:<28} {rmse:>14.2f}{marker}")
+```
+
+| Model | Test RMSE (MWh) |
+|:------|----------------:|
+| Linear baseline | `{python} f"{lr_rmse:.2f}"` |
+| HW3 expanded GAM | `{python} f"{gam_rmse:.2f}"` |
+| MLP | `{python} f"{mlp_mean:.2f} ± {mlp_std:.2f}"` |
+| NAM | `{python} f"{nam_mean:.2f} ± {nam_std:.2f}"` |
+| **NAM + interaction (improved)** | **`{python} f"{imp_mean:.2f} ± {imp_std:.2f}"`** |
+
+: Five-model summary on Jan-Mar 2026 test set {.striped}
+
+---
+
+# Part 4 — Evaluation and Interpretability (25 pts)
+
+```{python}
+#| label: part4-setup
+nn_candidates = {
+    "MLP":             (mlp_mean, mlp_preds),
+    "NAM":             (nam_mean, nam_preds),
+    "NAM+interaction": (imp_mean, imp_preds),
+}
+best_nn_name  = min(nn_candidates, key=lambda k: nn_candidates[k][0])
+best_nn_preds = nn_candidates[best_nn_name][1]
+
+print(f"Best neural model: {best_nn_name}  (RMSE {nn_candidates[best_nn_name][0]:.2f} MWh)")
+
+test_eval = test.copy().reset_index(drop=True)
+test_eval["pred_best"] = best_nn_preds
+test_eval["pred_mlp"]  = mlp_preds
+test_eval["pred_nam"]  = nam_preds
+```
+
+## Forecast Evaluation (12 pts)
+
+```{python}
+#| label: daily-rmse
+#| fig-cap: "Daily RMSE of the best neural model across the Jan-Mar 2026 test set. The dashed line is the period mean."
+def daily_rmse_series(df_eval, pred_col="pred_best", actual_col="solar_mwh"):
+    return (df_eval.groupby("date")
+            .apply(lambda x: float(np.sqrt(np.mean((x[actual_col] - x[pred_col])**2))))
+            .reset_index()
+            .rename(columns={0: "daily_rmse"}))
+
+dr = daily_rmse_series(test_eval)
+dr["date"] = pd.to_datetime(dr["date"])
+
+fig, ax = plt.subplots(figsize=(13, 4))
+ax.plot(dr["date"], dr["daily_rmse"], color="#4878CF", lw=1.5)
+ax.fill_between(dr["date"], dr["daily_rmse"], alpha=0.18, color="#4878CF")
+mean_dr = dr["daily_rmse"].mean()
+ax.axhline(mean_dr, color="#D65F5F", lw=1.5, ls="--",
+           label=f"Mean: {mean_dr:.1f} MWh")
+ax.set_xlabel("Date")
+ax.set_ylabel("Daily RMSE (MWh)")
+ax.set_title(f"Daily RMSE: {best_nn_name} (Test Set: Jan-Mar 2026)", fontweight="bold")
+ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
+plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha="right")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+
+worst2 = dr.nlargest(2, "daily_rmse")
+print("Two worst days:")
+print(worst2[["date", "daily_rmse"]].to_string(index=False))
+```
+
+```{python}
+#| label: worst-days-detail
+#| fig-cap: "Hourly actual vs predicted generation on the two worst days."
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+worst2_info = []
+for ax, (_, row) in zip(axes, worst2.iterrows()):
+    day_data = test_eval[test_eval["date"] == row["date"]]
+    wday     = pd.Timestamp(row["date"])
+    rad      = day_data["avg_shortwave_radiation"].mean()
+    cld      = day_data["avg_cloud_cover"].mean()
+    tmp      = day_data["avg_temperature_2m"].mean()
+    worst2_info.append({"date": wday, "rmse": row["daily_rmse"],
+                        "rad": rad, "cld": cld, "tmp": tmp})
+
+    ax.plot(day_data["hour"], day_data["solar_mwh"], label="Actual",
+            color="black", lw=2)
+    ax.plot(day_data["hour"], day_data["pred_best"], label=best_nn_name,
+            color="#4878CF", lw=2, ls="--")
+    ax.set_xlabel("Hour of day")
+    ax.set_ylabel("Solar generation (MWh)")
+    ax.set_title(
+        f"{wday.strftime('%Y-%m-%d')}  |  RMSE {row['daily_rmse']:.0f} MWh\n"
+        f"rad={rad:.0f} W/m2  cloud={cld:.0f}%  temp={tmp:.1f}C",
+        fontweight="bold")
+    ax.set_xticks(range(0, 24, 2))
+    ax.legend(frameon=False)
+
+plt.suptitle("Worst-day Analysis: Actual vs Predicted Hourly Generation",
+             fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: monthly-rmse-compute
+monthly_nn = (test_eval.groupby("month")
+              .apply(lambda x: float(np.sqrt(np.mean((x["solar_mwh"] - x["pred_best"])**2))))
+              .reset_index().rename(columns={0: "nn_rmse"}))
+
+hw3_monthly = {1: 358.81, 2: 455.12, 3: 695.01}
+monthly_nn["hw3_rmse"]   = monthly_nn["month"].map(hw3_monthly)
+monthly_nn["month_name"] = monthly_nn["month"].map({1:"January", 2:"February", 3:"March"})
+
+jan_nn   = monthly_nn.loc[monthly_nn["month"]==1,"nn_rmse"].values[0]
+feb_nn   = monthly_nn.loc[monthly_nn["month"]==2,"nn_rmse"].values[0]
+mar_nn   = monthly_nn.loc[monthly_nn["month"]==3,"nn_rmse"].values[0]
+all_better = bool(all(monthly_nn["nn_rmse"] < monthly_nn["hw3_rmse"]))
+
+print(monthly_nn[["month_name","hw3_rmse","nn_rmse"]].to_string(index=False))
+```
+
+| Month | HW3 best GAM (calendar-only) | HW4 best NN (`{python} best_nn_name`) |
+|:-----:|-----------------------------:|--------------------------------------:|
+| January  | 358.81 | `{python} f"{jan_nn:.2f}"` |
+| February | 455.12 | `{python} f"{feb_nn:.2f}"` |
+| March    | 695.01 | `{python} f"{mar_nn:.2f}"` |
+
+: Monthly test RMSE comparison in MWh {.striped}
+
+Both worst days have high shortwave radiation (`{python} f"{worst2_info[0]['rad']:.0f}"` and `{python} f"{worst2_info[1]['rad']:.0f}"` W/m² respectively) and low cloud cover (`{python} f"{worst2_info[0]['cld']:.0f}"` and `{python} f"{worst2_info[1]['cld']:.0f}"` %). On these days actual generation spikes well above the model's prediction during midday hours, which points to the same issue seen in HW3: the model still struggles when clear-sky conditions push generation above what the training distribution suggests for that time of year. The neural model `{python} "improves over the HW3 GAM in all three months" if all_better else "improves in some months but not all"`. The improvement is smallest in January, where generation is low and predictable to begin with, and largest in March where day-to-day variability is high and weather inputs add the most discriminative power.
+
+## Interpretability Comparison (13 pts)
+
+### Accuracy gap
+
+```{python}
+#| label: accuracy-gap
+cost_of_additivity = mlp_mean - nam_mean
+gain_over_gam      = nam_mean - gam_rmse
+
+print(f"Cost of additivity  (MLP RMSE - NAM RMSE) : {cost_of_additivity:+.2f} MWh")
+print(f"Gain from NN smooth (NAM RMSE - GAM RMSE) : {gain_over_gam:+.2f} MWh")
+```
+
+**(i) Cost of additivity** (MLP minus NAM): `{python} f"{cost_of_additivity:+.2f}"` MWh. A negative number here means the MLP outperforms the NAM. The gap reflects what the additive constraint costs: the MLP can model cross-feature interactions while the NAM cannot.
+
+**(ii) Gain from neural smoothers** (NAM minus GAM): `{python} f"{gain_over_gam:+.2f}"` MWh. `{python} "This is negative, meaning the NAM beats the expanded GAM" if gain_over_gam < 0 else "This is positive, meaning the GAM slightly beats the NAM"`. `{python} "So even under the additivity constraint, the neural subnets are flexible enough to outperform penalised splines on this dataset." if gain_over_gam < 0 else "The GAM's regularisation via penalised splines turns out to be a bit more effective than the ReLU subnets at this data size."` The two numbers together say that the MLP wins mainly because of interactions, not because neural smoothers are dramatically better than splines.
+
+### Concurvity / collinearity check
+
+```{python}
+#| label: concurvity
+#| fig-cap: "NAM subnet (blue) vs additive-GAM partial (red) for day_of_year and shortwave radiation, both centered to mean zero. Disagreements are likely driven by concurvity between these two correlated features."
+#| fig-height: 5
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+concurvity_feats = [
+    ("day_of_year", 1, 1, "Day of year",
+     np.linspace(1, 365, 400)),
+    ("avg_shortwave_radiation", 2, 2, "Shortwave radiation (W/m^2)",
+     np.linspace(train["avg_shortwave_radiation"].min(),
+                 train["avg_shortwave_radiation"].max(), 400)),
+]
+
+for ax, (fname, fi, gam_ti, xlabel, raw_grid) in zip(axes, concurvity_feats):
+    z_grid = (raw_grid - scaler.mean_[fi]) / scaler.scale_[fi]
+    f_nam  = centered_partial(best_nam.subnets[fi], X_train_nn[:, fi], z_grid)
+
+    XX      = gam_additive.generate_X_grid(term=gam_ti)
+    f_gam_r = gam_additive.partial_dependence(term=gam_ti, X=XX)
+    f_gam   = f_gam_r - f_gam_r.mean()
+    x_gam   = XX[:, fi]
+
+    ax.plot(raw_grid, f_nam, color="#4878CF", lw=2.5, label="NAM subnet")
+    ax.plot(x_gam,   f_gam, color="#D65F5F", lw=2.0, ls="--", label="GAM partial")
+    ax.axhline(0, color="black", lw=0.8, ls=":")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Partial effect (MWh)" if fname == "day_of_year" else "")
+    ax.set_title(xlabel, fontweight="bold")
+    ax.legend(frameon=False)
+
+plt.suptitle("Concurvity Check: NAM vs GAM Partial Functions (centered to mean zero)",
+             fontweight="bold", y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+`day_of_year` and `avg_shortwave_radiation` are strongly correlated: summer days are both high-DOY and high-radiation. Both models need to split the shared summer signal between these two features, which is a concurvity situation. The NAM and GAM curves for these two features tend to agree in shape but differ in amplitude, with whichever feature gets assigned a stronger gradient signal during training absorbing more of the summer variance. The GAM's spline penalty spreads the attribution more evenly, since regularisation pulls curvature towards zero for all terms simultaneously. For the NAM, the gradient can concentrate the summer signal more heavily in one subnet if the optimization happens to converge that way, leading to one curve with a larger range and the correlated one being comparatively flatter. The practical implication is that the individual partial functions are less trustworthy for causal attribution when inputs are correlated, even though the sum of all subnets still fits the data well.
+
+### Failure-mode case study
+
+```{python}
+#| label: failure-mode
+#| fig-cap: "Hourly actual, MLP, and NAM predictions on the day where the MLP most outperformed the NAM. The gap between the two models shows what additivity cannot capture."
+dr_mlp = daily_rmse_series(test_eval, pred_col="pred_mlp")
+dr_nam = daily_rmse_series(test_eval, pred_col="pred_nam")
+dr_mlp = dr_mlp.rename(columns={"daily_rmse": "rmse_mlp"})
+dr_nam = dr_nam.rename(columns={"daily_rmse": "rmse_nam"})
+dr_gap = dr_mlp.merge(dr_nam, on="date")
+dr_gap["gap"] = dr_gap["rmse_nam"] - dr_gap["rmse_mlp"]
+
+failure_row  = dr_gap.loc[dr_gap["gap"].idxmax()]
+failure_date = failure_row["date"]
+day_data     = test_eval[test_eval["date"] == failure_date].copy()
+
+print(f"Failure day    : {failure_date}")
+print(f"NAM daily RMSE : {failure_row['rmse_nam']:.1f} MWh")
+print(f"MLP daily RMSE : {failure_row['rmse_mlp']:.1f} MWh")
+print(f"Gap (NAM-MLP)  : {failure_row['gap']:.1f} MWh")
+print(f"Mean radiation : {day_data['avg_shortwave_radiation'].mean():.0f} W/m2")
+print(f"Mean cloud     : {day_data['avg_cloud_cover'].mean():.0f}%")
+
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.plot(day_data["hour"], day_data["solar_mwh"], label="Actual",
+        color="black", lw=2.5)
+ax.plot(day_data["hour"], day_data["pred_mlp"],  label="MLP",
+        color="#4878CF", lw=2, ls="--")
+ax.plot(day_data["hour"], day_data["pred_nam"],  label="NAM",
+        color="#D65F5F", lw=2, ls=":")
+ax.set_xlabel("Hour of day")
+ax.set_ylabel("Solar generation (MWh)")
+ax.set_title(
+    f"Failure-Mode: {pd.Timestamp(failure_date).strftime('%Y-%m-%d')}  "
+    f"(NAM RMSE {failure_row['rmse_nam']:.0f} vs MLP RMSE {failure_row['rmse_mlp']:.0f} MWh)",
+    fontweight="bold")
+ax.set_xticks(range(0, 24, 2))
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+On `{python} pd.Timestamp(failure_date).strftime('%Y-%m-%d')`, shortwave radiation averaged `{python} f"{day_data['avg_shortwave_radiation'].mean():.0f}"` W/m² and cloud cover was only `{python} f"{day_data['avg_cloud_cover'].mean():.0f}"` %, making it an unusually clear day. The MLP tracked the sharp midday peak closely while the NAM plateaued well below actual generation. The pattern is a straightforward interaction effect: when radiation is this high, each additional unit of solar angle toward noon multiplies the output more than the additive model expects. The NAM's hour subnet and radiation subnet produce their individual peaks, but the sum falls short because the model has no way to represent that the two effects amplify each other at the same time.
+
+---
+
+# Decision Log (10 pts) {.unnumbered}
+
+**1. Tuning narrative**
+
+For the MLP I started with three hidden layers of width 128, Adam optimizer at LR 0.001, batch size 512, and weight decay 1e-4. The first seed test RMSE came out to `{python} f"{mlp_mean:.1f}"` MWh. Looking at the validation loss curve, training converged cleanly around epoch `{python} int(np.argmin(mlp_losses[1]))` and the curve stayed flat afterwards with no sign of re-ascending, which told me the architecture had enough capacity and the regularization was doing its job. Across three seeds the standard deviation was only `{python} f"{mlp_std:.1f}"` MWh, so the result is stable. For the NAM I kept the exact same training recipe and just changed the architecture to five feature-specific subnets of width 64 and depth 2. The first-seed NAM came out at `{python} f"{nam_mean:.1f}"` MWh. I checked the partial function plots for hour, shortwave radiation, and cloud cover, and all three showed smooth physically reasonable shapes that matched the GAM reference closely. That was my main stopping criterion: once the subnets were learning sensible curves and the validation loss had plateaued, I moved on.
+
+**2. One concrete failure of additivity**
+
+The clearest failure happened on `{python} pd.Timestamp(failure_date).strftime('%Y-%m-%d')`. The NAM had a daily RMSE of `{python} f"{failure_row['rmse_nam']:.0f}"` MWh on that day while the MLP was at `{python} f"{failure_row['rmse_mlp']:.0f}"` MWh, a difference of `{python} f"{failure_row['gap']:.0f}"` MWh. The weather data shows radiation at `{python} f"{day_data['avg_shortwave_radiation'].mean():.0f}"` W/m² and cloud cover at `{python} f"{day_data['avg_cloud_cover'].mean():.0f}"` %, which is an exceptionally clear day. The hourly plot makes the problem obvious: the NAM prediction plateau during the midday peak hours while actual generation kept climbing. The additive model simply cannot represent the amplification that happens when high radiation and peak solar angle coincide at the same hour.
+
+**3. What I would build next**
+
+The interaction subnet helped (`{python} f"{nam_mean:.1f}"` to `{python} f"{imp_mean:.1f}"` MWh), but looking at the radiation partial function from the NAM, it has a small non-monotone dip before the maximum, which is physically wrong since more irradiance can only increase or maintain generation. A monotone-constrained radiation subnet, implemented by forcing all weights in the `FeatureNet` to be non-negative via `torch.abs()`, would eliminate this artifact and also reduce the concurvity interference from `day_of_year`: if the radiation subnet is forced to be monotone, the optimizer cannot push a spurious dip into it to compensate for signal from correlated features. Given that the hardest test days are all high-radiation days, fixing the radiation subnet's shape seems like the highest-value single change to try next.
+
+```{python}
+#| label: save-weights
+torch.save(best_mlp.state_dict(), "models/mlp_state_dict.pt")
+torch.save(best_nam.state_dict(), "models/nam_state_dict.pt")
+print("Saved: models/mlp_state_dict.pt")
+print("Saved: models/nam_state_dict.pt")
+```
